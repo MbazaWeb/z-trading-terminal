@@ -19,6 +19,7 @@ export function Mt5Dashboard(){
    const res=await fetch("/api/account/mt5/modify",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({ticket:edit.ticket,request_id:crypto.randomUUID(),sl,tp,expected_sl:edit.oldSl,expected_tp:edit.oldTp})});
    const result=await res.json();
    if(res.ok&&result.status==="confirmed"){setNotice("Broker confirmed SL/TP update");setEdit(null);}
+   else if(res.ok&&result.status==="rejected"){setNotice("Broker rejected modification (code "+result.retcode+")");}
    else{setNotice(result.error||"Modification uncertain; verify MT5 position");if(res.ok||res.status>=500||res.status===409){setModifyBlocked(prev=>[...prev,edit.ticket]);setEdit(null);}}
   }catch{setNotice("Modification outcome unknown; verify MT5 position");setModifyBlocked(prev=>[...prev,edit.ticket]);setEdit(null);}
   finally{closeLock.current=false;setClosing(null);}
@@ -34,6 +35,8 @@ export function Mt5Dashboard(){
    if(res.ok&&result.status==="confirmed"){
     setNotice("Broker confirmed close deal "+result.deal);
     setBlocked(prev=>[...prev,ticket]);
+   }else if(res.ok&&result.status==="rejected"){
+    setNotice("Broker rejected close (code "+result.retcode+")");
    }else{
     setNotice(result.error||"Close uncertain; check broker history");
     if(res.ok||res.status>=500||res.status===409)setBlocked(prev=>[...prev,ticket]);

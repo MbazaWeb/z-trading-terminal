@@ -1,0 +1,14 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import {createHmac} from "node:crypto";
+import {issueSession,readSession} from "../src/lib/mt5Session.ts";
+const key="a".repeat(32);
+const sign=(data)=>{const body=Buffer.from(JSON.stringify(data)).toString("base64url");return body+"."+createHmac("sha256",key).update(body).digest("base64url");};
+test("valid session",()=>assert.deepEqual(readSession(issueSession("123","Demo",key),key),{login:"123",server:"Demo"}));
+test("wrong key",()=>assert.equal(readSession(issueSession("123","Demo",key),"b".repeat(32)),null));
+test("expired",()=>assert.equal(readSession(sign({login:"123",server:"Demo",exp:Date.now()-1}),key),null));
+test("tampered body",()=>assert.equal(readSession("x."+issueSession("123","Demo",key).split(".")[1],key),null));
+test("extra separator",()=>assert.equal(readSession(issueSession("123","Demo",key)+".",key),null));
+test("numeric login rejected",()=>assert.equal(readSession(sign({login:123,server:"Demo",exp:Date.now()+10000}),key),null));
+test("empty server rejected",()=>assert.equal(readSession(sign({login:"123",server:"",exp:Date.now()+10000}),key),null));
+test("weak key rejected",()=>assert.equal(readSession(issueSession("123","Demo","short"),"short"),null));

@@ -19,5 +19,6 @@ jobs:
         with:
           node-version: '22'
       - run: npm install
+      - run: node --experimental-strip-types --test tests/mt5-session.test.mjs
       - run: npx tsc --noEmit
       - run: npm run build
