@@ -12,6 +12,8 @@ def tables(report):
     yield "Suggested improvements",["Recommendation"],[[x] for x in report["recommendations"]]+[["Excluded incomplete or complex histories: "+str(report["excluded"])],["Broker exit reason is not proof of strategy failure."]]
 
 def render(report,fmt):
+    if fmt not in ("xlsx","pdf"):
+        raise ValueError("Unsupported report format")
     out=BytesIO()
     if fmt=="xlsx":
         from openpyxl import Workbook
@@ -41,7 +43,7 @@ def render(report,fmt):
         for name,headers,rows in tables(report):
             story.append(Paragraph(name,styles["Heading2"]))
             def cell(v): return Paragraph(escape(str(v if v is not None else "—")),styles["BodyText"])
-            table=LongTable([[cell(v) for v in row] for row in [headers,*rows]],repeatRows=1,colWidths=[1100/len(headers)]*len(headers))
+            table=LongTable([[cell(v) for v in row] for row in [headers,*rows]],repeatRows=1,splitInRow=1,colWidths=[1100/len(headers)]*len(headers))
             table.setStyle(TableStyle([("BACKGROUND",(0,0),(-1,0),colors.lightgrey),("VALIGN",(0,0),(-1,-1),"TOP"),("GRID",(0,0),(-1,-1),.25,colors.grey)]))
             story.extend([table,Spacer(1,12)])
         SimpleDocTemplate(out,pagesize=landscape(A3),leftMargin=35,rightMargin=35).build(story)
