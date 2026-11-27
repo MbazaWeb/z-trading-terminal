@@ -531,8 +531,8 @@ function TradeLogsTable({ trades }: { trades: Trade[] }) {
       out = out.filter((t) => t.market.toLowerCase().includes(q));
     }
     out.sort((a, b) => {
-      let av: number | string = a[sortKey];
-      let bv: number | string = b[sortKey];
+      let av: number | string = a[sortKey] ?? -1;
+      let bv: number | string = b[sortKey] ?? -1;
       if (sortKey === "exitPrice") {
         av = a.exitPrice ?? -1;
         bv = b.exitPrice ?? -1;
