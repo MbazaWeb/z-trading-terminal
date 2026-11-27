@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { Mt5Dashboard } from "@/components/views/Mt5Dashboard";
 import { useMarketData } from "@/components/trading/useMarketData";
 import { TradingView } from "@/components/trading/TradingView";
 import { Sidebar, type ViewId } from "@/components/views/Sidebar";
@@ -57,7 +58,7 @@ export default function Page() {
             {/* Keyed wrapper so each view switch replays the fade transition. */}
             <div key={view} className="animate-view-enter">
               {view === "trading" && <TradingView market={market} />}
-              {view === "dashboard" && <div className="p-6">Unavailable until broker integration is complete.</div>}
+              {view === "dashboard" && (provider === "metatrader" ? <Mt5Dashboard /> : <div className="p-6">Deriv dashboard pending.</div>)}
               {view === "agents" && <div className="p-6">Unavailable until broker integration is complete.</div>}
               {view === "bot" && <div className="p-6">Unavailable until broker integration is complete.</div>}
               {view === "reports" && <div className="p-6">Unavailable until broker integration is complete.</div>}

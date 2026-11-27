@@ -1,6 +1,7 @@
 import os
 import secrets
 import threading
+from datetime import datetime, timedelta, timezone
 import MetaTrader5 as mt5
 from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel, SecretStr, Field
@@ -71,5 +72,37 @@ def market(symbol: str = "", timeframe: str = "15m", authorization: str = Header
                     "candles": [{"time": int(r["time"]) * 1000, "open": float(r["open"]),
                                  "high": float(r["high"]), "low": float(r["low"]),
                                  "close": float(r["close"]), "tickVolume": int(r["tick_volume"])} for r in rates]}
+        finally:
+            mt5.shutdown()
+
+@app.get("/account")
+def account_snapshot(login: int, server: str, authorization: str = Header(default="")):
+    key = os.environ.get("MT5_BRIDGE_KEY", "")
+    if len(key) < 32 or not secrets.compare_digest(authorization, "Bearer " + key):
+        raise HTTPException(401, "Unauthorized")
+    with lock:
+        try:
+            if not mt5.initialize(timeout=15000):
+                raise HTTPException(503, "Terminal unavailable")
+            a, t = mt5.account_info(), mt5.terminal_info()
+            if not a or not t or not t.connected or a.login != login or a.server != server or a.trade_mode != mt5.ACCOUNT_TRADE_MODE_DEMO:
+                raise HTTPException(403, "Verified account not connected")
+            positions = mt5.positions_get()
+            now = datetime.now(timezone.utc)
+            deals = mt5.history_deals_get(now - timedelta(days=30), now)
+            if positions is None or deals is None:
+                raise HTTPException(503, "Account history unavailable")
+            return {"loginid": str(a.login), "server": a.server, "currency": a.currency,
+                    "balance": a.balance, "equity": a.equity, "margin": a.margin,
+                    "freeMargin": a.margin_free, "profit": a.profit, "leverage": a.leverage,
+                    "asOf": now.isoformat(),
+                    "positions": [{"ticket": str(p.ticket), "symbol": p.symbol,
+                                   "side": "Buy" if p.type == mt5.POSITION_TYPE_BUY else "Sell",
+                                   "volume": p.volume, "open": p.price_open, "current": p.price_current,
+                                   "profit": p.profit, "swap": p.swap} for p in positions],
+                    "deals": [{"ticket": str(d.ticket), "symbol": d.symbol, "time": d.time,
+                               "entry": d.entry, "type": d.type, "volume": d.volume,
+                               "profit": d.profit, "commission": d.commission, "swap": d.swap, "fee": d.fee}
+                              for d in deals if d.type in (mt5.DEAL_TYPE_BUY, mt5.DEAL_TYPE_SELL)]}
         finally:
             mt5.shutdown()

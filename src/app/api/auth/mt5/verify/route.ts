@@ -1,3 +1,4 @@
+import { issueSession } from "@/lib/mt5Session";
 import { NextRequest, NextResponse } from "next/server";
 
 export async function POST(request: NextRequest) {
@@ -26,7 +27,9 @@ export async function POST(request: NextRequest) {
     if (account.loginid !== String(Number(login)) || account.accountType !== "demo" || account.server !== server.trim() || !Number.isFinite(account.balance)) {
       return NextResponse.json({ error: "Invalid broker response" }, { status: 502 });
     }
-    return NextResponse.json({ account }, { headers: { "Cache-Control": "no-store" } });
+    const result = NextResponse.json({ account }, { headers: { "Cache-Control": "no-store" } });
+    result.cookies.set("mt5_session", issueSession(account.loginid, account.server, key), {httpOnly:true,secure:true,sameSite:"strict",path:"/api/account/mt5",maxAge:900});
+    return result;
   } catch {
     return NextResponse.json({ error: "MT5 bridge unavailable or invalid request" }, { status: 502 });
   }

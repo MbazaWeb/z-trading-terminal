@@ -109,7 +109,8 @@ export const useAuthStore = create<AuthState>()(
       },
 
       logout: () => {
-        set({ ...DEFAULT_STATE });
+        if (useAuthStore.getState().provider === "metatrader") void fetch("/api/account/mt5", {method:"DELETE"}).catch(()=>{});
+        set({ ...DEFAULT_STATE, _hasHydrated: true });
         // Best-effort: clear the persisted blob in case the reducer ran before
         // persist rehydrated.
         try {
