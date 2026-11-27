@@ -110,6 +110,7 @@ def account_snapshot(login: int, server: str, authorization: str = Header(defaul
 # Demo execution is opt-in and restricted to a dedicated account.
 from risk import check_portfolio
 from risk import check_portfolio
+from reconciliation import record, reconcile
 import sqlite3
 import math
 import time
@@ -180,6 +181,7 @@ def order(body: OrderRequest, authorization: str = Header(default="")):
                     raise HTTPException(409,"Unresolved order exists; reconcile broker history before further entries")
                 try:
                     db.execute("INSERT INTO requests VALUES (?,?)",(str(body.request_id),"pending"))
+                    record(db,body,req,"open")
                     db.commit()
                 except sqlite3.IntegrityError:
                     raise HTTPException(409,"Duplicate request; reconcile broker history")
@@ -230,6 +232,7 @@ def close_position(body: CloseRequest, authorization: str = Header(default="")):
                 db.execute("CREATE TABLE IF NOT EXISTS close_requests (ticket TEXT PRIMARY KEY, id TEXT NOT NULL)")
                 try:
                     db.execute("INSERT INTO requests VALUES (?,?)",(str(body.request_id),"pending"))
+                    record(db,body,req,"close")
                     db.execute("INSERT INTO close_requests VALUES (?,?)",(str(p.ticket),str(body.request_id)))
                     db.commit()
                 except sqlite3.IntegrityError:
@@ -296,6 +299,7 @@ def modify_position(body: ModifyRequest, authorization: str = Header(default="")
                 db.execute("CREATE TABLE IF NOT EXISTS modify_requests (ticket TEXT PRIMARY KEY, id TEXT NOT NULL)")
                 try:
                     db.execute("INSERT INTO requests VALUES (?,?)",(str(body.request_id),"pending"))
+                    record(db,body,req,"modify")
                     db.execute("INSERT INTO modify_requests VALUES (?,?)",(str(p.ticket),str(body.request_id)))
                     db.commit()
                 except sqlite3.IntegrityError:
@@ -310,3 +314,25 @@ def modify_position(body: ModifyRequest, authorization: str = Header(default="")
                 return {"status":status,"requestId":str(body.request_id),"ticket":str(p.ticket),"retcode":result.retcode if result else None}
         finally:
             mt5.shutdown()
+
+def reconciliation_loop():
+    while True:
+        try:
+            with lock:
+                try:
+                    if mt5.initialize(timeout=15000):
+                        a,t=mt5.account_info(),mt5.terminal_info()
+                        if a and t and t.connected and a.trade_mode==mt5.ACCOUNT_TRADE_MODE_DEMO and str(a.login)==os.environ.get("MT5_EXECUTION_LOGIN") and a.server==os.environ.get("MT5_EXECUTION_SERVER"):
+                            with sqlite3.connect(os.environ.get("MT5_ORDER_DB","mt5-orders.sqlite3")) as db:
+                                reconcile(mt5,db,a)
+                finally:
+                    mt5.shutdown()
+        except Exception:
+            import logging
+            logging.exception("Reconciliation failed; unresolved requests remain blocked")
+        time.sleep(30)
+
+@app.on_event("startup")
+def start_reconciliation():
+    if os.environ.get("MT5_DEMO_EXECUTION")=="true":
+        threading.Thread(target=reconciliation_loop,daemon=True,name="mt5-reconciliation").start()
