@@ -109,6 +109,7 @@ def account_snapshot(login: int, server: str, authorization: str = Header(defaul
 
 # Demo execution is opt-in and restricted to a dedicated account.
 from risk import check_portfolio
+from risk import check_portfolio
 import sqlite3
 import math
 import time
@@ -160,6 +161,11 @@ def order(body: OrderRequest, authorization: str = Header(default="")):
             reason = check_portfolio(mt5, a, -loss)
             if reason:
                 raise HTTPException(403, reason)
+            if os.path.exists(os.environ.get("MT5_STOP_FILE","STOP_TRADING")):
+                raise HTTPException(403,"Emergency stop active")
+            risk_error = check_portfolio(mt5,a,body.symbol,-loss)
+            if risk_error:
+                raise HTTPException(400,risk_error)
             # FOK only: do not silently switch execution policy.
             if not (s.filling_mode & 1):
                 raise HTTPException(400,"FOK filling not supported")
@@ -177,6 +183,8 @@ def order(body: OrderRequest, authorization: str = Header(default="")):
                     db.commit()
                 except sqlite3.IntegrityError:
                     raise HTTPException(409,"Duplicate request; reconcile broker history")
+                if os.path.exists(os.environ.get("MT5_STOP_FILE","STOP_TRADING")):
+                    raise HTTPException(403,"Emergency stop active")
                 result=mt5.order_send(req)
                 status="confirmed" if result is not None and result.retcode==mt5.TRADE_RETCODE_DONE and result.deal else "uncertain"
                 db.execute("UPDATE requests SET status=? WHERE id=?",(status,str(body.request_id)))
