@@ -12,6 +12,7 @@ class Bot:
         self.account_key=account_key
         self.guard=threading.RLock()
         self.wake=threading.Event()
+        self.shutdown_event=threading.Event()
         self.state="stopped"
         self.config=None
         self.busy=False
@@ -27,7 +28,8 @@ class Bot:
         self.record({"type":"restart","message":"Bridge restarted; explicit start required","previousState":previous[0] if previous else None})
         self.thread=threading.Thread(target=self.loop,daemon=True,name="demo-bot")
         self.thread.start()
-        threading.Thread(target=self.watchdog,daemon=True,name="demo-watchdog").start()
+        self.watchdog_thread=threading.Thread(target=self.watchdog,daemon=True,name="demo-watchdog")
+        self.watchdog_thread.start()
 
     def record(self,event):
         event={"time":time.time(),**event}
@@ -38,12 +40,12 @@ class Bot:
 
     def allowed(self):
         with self.guard:
-            return self.state=="running"
+            return self.state=="running" and not self.shutdown_event.is_set()
 
     def control(self, action, config=None):
         with self.guard:
             if action=="start":
-                if self.busy or self.state=="running" or not self.thread.is_alive(): raise ValueError("Bot unavailable or active")
+                if self.shutdown_event.is_set() or self.busy or self.state=="running" or not self.thread.is_alive(): raise ValueError("Bot unavailable or active")
                 self.config=config
                 self.state="running"
             elif action=="pause": self.state="paused"
@@ -60,8 +62,7 @@ class Bot:
             return {"state":self.state,"busy":self.busy,"events":list(self.events),"intervalSeconds":45,"heartbeat":self.heartbeat,"cycleStarted":self.started,"workerAlive":self.thread.is_alive()}
 
     def watchdog(self):
-        while True:
-            time.sleep(5)
+        while not self.shutdown_event.wait(5):
             with self.guard:
                 if self.state=="running" and (not self.thread.is_alive() or (self.busy and self.started and time.time()-self.started>120)):
                     self.state="paused"
@@ -69,12 +70,12 @@ class Bot:
                     except Exception: pass
 
     def loop(self):
-        while True:
+        while not self.shutdown_event.is_set():
             self.wake.wait(45)
             self.wake.clear()
             with self.guard:
                 self.heartbeat=time.time()
-                if self.state!="running" or self.busy: continue
+                if self.shutdown_event.is_set() or self.state!="running" or self.busy: continue
                 self.busy=True
                 self.started=time.time()
                 config=self.config
@@ -94,3 +95,11 @@ class Bot:
                     self.busy=False
                     self.started=None
                     self.heartbeat=time.time()
+
+    def shutdown(self):
+        with self.guard:
+            self.state="stopped"
+            self.shutdown_event.set()
+            self.wake.set()
+        self.thread.join(timeout=2)
+        self.watchdog_thread.join(timeout=2)

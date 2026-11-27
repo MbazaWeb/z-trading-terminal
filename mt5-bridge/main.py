@@ -609,3 +609,8 @@ def worker_status(login: int, server: str, authorization: str = Header(default="
         raise HTTPException(403,"Account not allowed")
     if maintenance is None: raise HTTPException(503,"Worker unavailable")
     return maintenance.status()
+
+@app.on_event("shutdown")
+def shutdown_bot_scheduler():
+    if bot is not None:
+        bot.shutdown()
