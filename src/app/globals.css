@@ -1,0 +1,351 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
+/* Trading Terminal Theme */
+:root {
+  --radius: 0.5rem;
+
+  /* Trading terminal dark palette */
+  --background: #0a0e17;
+  --foreground: #e6edf3;
+  --card: #0d1117;
+  --card-foreground: #e6edf3;
+  --popover: #11161f;
+  --popover-foreground: #e6edf3;
+  --primary: #16c784;
+  --primary-foreground: #0a0e17;
+  --secondary: #161b22;
+  --secondary-foreground: #e6edf3;
+  --muted: #131820;
+  --muted-foreground: #8b949e;
+  --accent: #1c2230;
+  --accent-foreground: #e6edf3;
+  --destructive: #ea3943;
+  --border: #1e2530;
+  --input: #1a2029;
+  --ring: #2a3340;
+  --chart-1: #16c784;
+  --chart-2: #ea3943;
+  --chart-3: #f0b90b;
+  --chart-4: #4f9cf9;
+  --chart-5: #a855f7;
+  --sidebar: #0d1117;
+  --sidebar-foreground: #e6edf3;
+  --sidebar-primary: #16c784;
+  --sidebar-primary-foreground: #0a0e17;
+  --sidebar-accent: #1c2230;
+  --sidebar-accent-foreground: #e6edf3;
+  --sidebar-border: #1e2530;
+  --sidebar-ring: #2a3340;
+
+  /* Trading-specific tokens */
+  --bull: #16c784;
+  --bull-dim: #0e7a4d;
+  --bear: #ea3943;
+  --bear-dim: #8a1f26;
+  --grid-line: #161b22;
+  --grid-line-strong: #1e2530;
+  --panel-border: #1c2230;
+  --glow-bull: rgba(22, 199, 132, 0.35);
+  --glow-bear: rgba(234, 57, 67, 0.35);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  html {
+    color-scheme: dark;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-feature-settings: "tnum" 1, "cv01" 1;
+  }
+  /* Custom scrollbar for trading terminal feel */
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  ::-webkit-scrollbar-track {
+    background: #0a0e17;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: #1e2530;
+    border-radius: 4px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: #2a3340;
+  }
+  ::-webkit-scrollbar-corner {
+    background: #0a0e17;
+  }
+}
+
+@layer utilities {
+  /* Glow effects */
+  .glow-bull {
+    box-shadow: 0 0 0 1px rgba(22, 199, 132, 0.4), 0 0 12px rgba(22, 199, 132, 0.25);
+  }
+  .glow-bear {
+    box-shadow: 0 0 0 1px rgba(234, 57, 67, 0.4), 0 0 12px rgba(234, 57, 67, 0.25);
+  }
+  .glow-soft {
+    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.06), 0 0 16px rgba(0, 0, 0, 0.4);
+  }
+  .text-glow-bull {
+    text-shadow: 0 0 8px rgba(22, 199, 132, 0.5);
+  }
+  .text-glow-bear {
+    text-shadow: 0 0 8px rgba(234, 57, 67, 0.5);
+  }
+
+  /* Grid background pattern */
+  .bg-grid {
+    background-image:
+      linear-gradient(to right, var(--grid-line) 1px, transparent 1px),
+      linear-gradient(to bottom, var(--grid-line) 1px, transparent 1px);
+    background-size: 40px 40px;
+  }
+
+  /* Scrolling ticker tape animation */
+  @keyframes ticker-scroll {
+    0% {
+      transform: translateX(0);
+    }
+    100% {
+      transform: translateX(-50%);
+    }
+  }
+  .animate-ticker {
+    animation: ticker-scroll 60s linear infinite;
+  }
+  .animate-ticker:hover {
+    animation-play-state: paused;
+  }
+
+  /* Subtle pulse for live dot */
+  @keyframes live-pulse {
+    0%, 100% {
+      opacity: 1;
+      box-shadow: 0 0 0 0 rgba(22, 199, 132, 0.6);
+    }
+    50% {
+      opacity: 0.7;
+      box-shadow: 0 0 0 4px rgba(22, 199, 132, 0);
+    }
+  }
+  .animate-live {
+    animation: live-pulse 2s ease-in-out infinite;
+  }
+
+  /* Flash animations for price updates */
+  @keyframes flash-up {
+    0% { background-color: rgba(22, 199, 132, 0.25); }
+    100% { background-color: transparent; }
+  }
+  @keyframes flash-down {
+    0% { background-color: rgba(234, 57, 67, 0.25); }
+    100% { background-color: transparent; }
+  }
+  .flash-up {
+    animation: flash-up 0.6s ease-out;
+  }
+  .flash-down {
+    animation: flash-down 0.6s ease-out;
+  }
+
+  /* Panel fade-in */
+  @keyframes fade-in-up {
+    from {
+      opacity: 0;
+      transform: translateY(4px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+  .animate-fade-in-up {
+    animation: fade-in-up 0.3s ease-out;
+  }
+
+  /* View switch transition (fade + slight translate) */
+  @keyframes view-enter {
+    from {
+      opacity: 0;
+      transform: translateY(6px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+  .animate-view-enter {
+    animation: view-enter 0.25s ease-out;
+  }
+
+  /* Self-improvement "Learning" badge pulse */
+  @keyframes learning-pulse {
+    0%, 100% {
+      box-shadow: 0 0 0 0 rgba(79, 156, 249, 0.5);
+      opacity: 1;
+    }
+    50% {
+      box-shadow: 0 0 0 5px rgba(79, 156, 249, 0);
+      opacity: 0.85;
+    }
+  }
+  .animate-learning-pulse {
+    animation: learning-pulse 1.4s ease-in-out infinite;
+  }
+}
+
+/* ---- Print styles (PDF report via window.print()) ---- */
+
+.print-only {
+  display: none;
+}
+
+@media print {
+  @page {
+    margin: 1.2cm;
+  }
+
+  html,
+  body {
+    background: #ffffff !important;
+    color: #000000 !important;
+  }
+
+  /* Hide the entire app, then reveal only the print area. */
+  body * {
+    visibility: hidden !important;
+  }
+  .print-only,
+  .print-only * {
+    visibility: visible !important;
+  }
+  .print-only {
+    display: block !important;
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+  }
+
+  .print-root {
+    font-family: Arial, Helvetica, sans-serif;
+    color: #000000;
+    background: #ffffff;
+    padding: 8px;
+    font-size: 11px;
+    line-height: 1.45;
+  }
+
+  .print-header {
+    border-bottom: 2px solid #000000;
+    padding-bottom: 8px;
+    margin-bottom: 12px;
+  }
+  .print-header h1 {
+    font-size: 20px;
+    margin: 0;
+    color: #000000;
+  }
+  .print-sub {
+    margin: 4px 0 0;
+    font-size: 11px;
+    color: #444444;
+  }
+
+  .print-section {
+    font-size: 13px;
+    font-weight: 700;
+    margin: 18px 0 6px;
+    color: #000000;
+    border-bottom: 1px solid #cccccc;
+    padding-bottom: 3px;
+  }
+
+  .print-stats,
+  .print-table {
+    width: 100%;
+    border-collapse: collapse;
+    color: #000000;
+  }
+  .print-stats th,
+  .print-stats td,
+  .print-table th,
+  .print-table td {
+    border: 1px solid #999999;
+    padding: 4px 6px;
+    text-align: left;
+    font-size: 10px;
+  }
+  .print-stats th,
+  .print-table th {
+    background: #f0f0f0;
+    font-weight: 700;
+  }
+  .print-stats td,
+  .print-table td.right {
+    text-align: right;
+  }
+  .print-table thead th {
+    background: #e6e6e6;
+  }
+  .print-table tbody tr:nth-child(even) {
+    background: #fafafa;
+  }
+
+  .print-footer {
+    margin-top: 20px;
+    border-top: 1px solid #cccccc;
+    padding-top: 6px;
+    font-size: 9px;
+    color: #666666;
+    text-align: center;
+  }
+}

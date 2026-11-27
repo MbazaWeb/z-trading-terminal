@@ -52,3 +52,14 @@ prompt
 server.log
 # Skills directory
 /skills/
+# Project artifacts (not part of the app)
+/.zscripts/
+/agent-ctx/
+/download/
+/tool-results/
+/upload/
+/examples/
+/mini-services/
+/db/
+/bun.lock
+/Caddyfile
