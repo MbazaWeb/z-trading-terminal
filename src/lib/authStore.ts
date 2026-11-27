@@ -33,7 +33,7 @@ interface AuthState {
   // actions
   setPendingAccountType: (t: PendingAccountType) => void;
   loginWithDeriv: (token: string, accounts: AccountInfo[]) => void;
-  loginWithMetaTrader: (loginid: string, accountType: AccountType) => void;
+  loginWithMetaTrader: (account: AccountInfo) => void;
   setAccountType: (t: "real" | "demo") => void;
   logout: () => void;
   /** Internal: flipped true by the persist middleware after rehydration. */
@@ -44,8 +44,6 @@ interface AuthState {
 const DEMO_BALANCE = 10_000;
 const REAL_BALANCE = 5_000;
 
-const MOCK_MT5_NAME = "MT5 Trader";
-const MOCK_MT5_EMAIL = "trader@metatrader.com";
 
 const DEFAULT_STATE = {
   isAuthenticated: false,
@@ -90,24 +88,14 @@ export const useAuthStore = create<AuthState>()(
         });
       },
 
-      loginWithMetaTrader: (loginid, accountType) => {
-        const isDemo = accountType === "demo";
-        set({
-          isAuthenticated: true,
-          provider: "metatrader",
-          accessToken: null,
-          accountType,
-          accountInfo: {
-            loginid,
-            currency: "USD",
-            balance: isDemo ? DEMO_BALANCE : REAL_BALANCE,
-            email: MOCK_MT5_EMAIL,
-            name: MOCK_MT5_NAME,
-          },
-        });
+      loginWithMetaTrader: (account) => {
+        if (account.accountType !== "demo" || !Number.isFinite(account.balance)) return;
+        set({ isAuthenticated: true, provider: "metatrader", accessToken: null,
+          accountType: "demo", accountInfo: account });
       },
 
       setAccountType: (t) => {
+        if (useAuthStore.getState().provider === "metatrader") return;
         const info = useAuthStore.getState().accountInfo;
         // Adjust balance to match the chosen mode when we still hold defaults.
         if (info) {
@@ -139,6 +127,7 @@ export const useAuthStore = create<AuthState>()(
       // The shell calls `useAuthStore.persist.rehydrate()` in a useEffect.
       skipHydration: true,
       onRehydrateStorage: () => (state) => {
+        if (state?.provider === "metatrader") state.logout();
         state?._setHydrated?.();
       },
       // Only persist the data fields, not the action functions.

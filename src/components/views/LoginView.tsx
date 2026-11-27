@@ -17,27 +17,12 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import {
   type PendingAccountType,
   useAuthStore,
 } from "@/lib/authStore";
 
-const MT5_SERVERS = [
-  "Deriv-MT5",
-  "ICMarkets-MT5",
-  "Exness-MT5",
-  "FBS-MT5",
-  "Pepperstone-MT5",
-  "Other",
-] as const;
 
 function AccountTypePill({
   type,
@@ -82,7 +67,7 @@ function LoginCard() {
   const [showMt5Form, setShowMt5Form] = useState(false);
   const [loginNumber, setLoginNumber] = useState("");
   const [password, setPassword] = useState("");
-  const [server, setServer] = useState<string>(MT5_SERVERS[0]);
+  const [server, setServer] = useState<string>("MetaQuotes-Demo");
   const [showPassword, setShowPassword] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [errors, setErrors] = useState<{ login?: string; password?: string }>(
@@ -98,24 +83,35 @@ function LoginCard() {
     setErrors({});
   };
 
-  const handleMt5Submit = (e: React.FormEvent) => {
+  const handleMt5Submit = async (e: React.FormEvent) => {
     e.preventDefault();
     const next: { login?: string; password?: string } = {};
-    if (!loginNumber.trim()) next.login = "Account number is required";
+    if (!/^\d{1,15}$/.test(loginNumber.trim())) next.login = "Account number is required";
     if (!password) next.password = "Password is required";
     setErrors(next);
     if (next.login || next.password) return;
 
+    if (pendingAccountType === "real") {
+      toast.error("MT5 real accounts are not enabled yet");
+      return;
+    }
     setSubmitting(true);
-    const chosenType: PendingAccountType = pendingAccountType ?? "demo";
-    setTimeout(() => {
-      const loginid = `MT5-${loginNumber.trim()}`;
-      loginWithMetaTrader(loginid, chosenType);
-      setSubmitting(false);
-      toast.success("Connected to MetaTrader", {
-        description: `Logged in as ${loginid} (${server})`,
+    try {
+      const response = await fetch("/api/auth/mt5/verify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ login: loginNumber.trim(), password, server: server.trim() }),
       });
-    }, 1500);
+      const data = await response.json();
+      if (!response.ok || !data.account) throw new Error(data.error || "Verification failed");
+      loginWithMetaTrader(data.account);
+      toast.success("MT5 account verified", { description: "Read-only connection" });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "MT5 connection failed");
+    } finally {
+      setPassword("");
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -301,21 +297,7 @@ function LoginCard() {
               >
                 Server / Broker
               </Label>
-              <Select value={server} onValueChange={setServer}>
-                <SelectTrigger
-                  id="mt5-server"
-                  className="bg-[#0d1117]"
-                >
-                  <SelectValue placeholder="Select server" />
-                </SelectTrigger>
-                <SelectContent>
-                  {MT5_SERVERS.map((s) => (
-                    <SelectItem key={s} value={s}>
-                      {s}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <Input id="mt5-server" value={server} onChange={(e) => setServer(e.target.value)} placeholder="Exact MT5 broker server" />
             </div>
 
             {/* Account type toggle (synced with pending) */}
