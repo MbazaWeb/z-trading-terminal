@@ -30,11 +30,6 @@ import {
   useAuthStore,
 } from "@/lib/authStore";
 
-// Register your app at https://api.deriv.com/dashboard and replace this
-// with the App ID you obtain there. The placeholder below is Deriv's public
-// demo App ID that does not require registration for quick testing.
-const DERIV_APP_ID = "1089";
-
 const MT5_SERVERS = [
   "Deriv-MT5",
   "ICMarkets-MT5",
@@ -43,11 +38,6 @@ const MT5_SERVERS = [
   "Pepperstone-MT5",
   "Other",
 ] as const;
-
-function startDerivOAuth() {
-  const oauthUrl = `https://oauth.deriv.com/oauth2/authorize?app_id=${DERIV_APP_ID}&l=en&brand=binary`;
-  window.location.href = oauthUrl;
-}
 
 function AccountTypePill({
   type,
@@ -101,9 +91,6 @@ function LoginCard() {
 
   const handleDeriv = () => {
     setPendingAccountType(pendingAccountType ?? "demo");
-    toast.info("Redirecting to Deriv...");
-    // Tiny delay so the toast actually paints before the full-page redirect.
-    setTimeout(startDerivOAuth, 250);
   };
 
   const toggleMt5 = () => {
@@ -179,17 +166,23 @@ function LoginCard() {
       </div>
 
       {/* Deriv button */}
-      <button
-        type="button"
-        onClick={handleDeriv}
-        className="group relative flex w-full items-center justify-center gap-3 overflow-hidden rounded-lg border border-[var(--bull)]/60 bg-gradient-to-r from-emerald-500 to-green-600 px-4 py-3 text-sm font-semibold text-white shadow-[0_0_18px_rgba(22,199,132,0.35)] transition-all duration-200 hover:scale-[1.02] hover:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--bull)]"
+      <form
+        action="/api/auth/deriv/start"
+        method="get"
+        onSubmit={handleDeriv}
+        className="w-full"
       >
-        <span className="flex size-6 items-center justify-center rounded-md bg-white/20 font-mono text-sm font-bold tracking-tighter">
-          D
-        </span>
-        <span>Continue with Deriv</span>
-        <ChevronRight className="size-4 opacity-80 transition-transform group-hover:translate-x-0.5" />
-      </button>
+        <button
+          type="submit"
+          className="group relative flex w-full items-center justify-center gap-3 overflow-hidden rounded-lg border border-[var(--bull)]/60 bg-gradient-to-r from-emerald-500 to-green-600 px-4 py-3 text-sm font-semibold text-white shadow-[0_0_18px_rgba(22,199,132,0.35)] transition-all duration-200 hover:scale-[1.02] hover:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--bull)]"
+        >
+          <span className="flex size-6 items-center justify-center rounded-md bg-white/20 font-mono text-sm font-bold tracking-tighter">
+            D
+          </span>
+          <span>Continue with Deriv</span>
+          <ChevronRight className="size-4 opacity-80 transition-transform group-hover:translate-x-0.5" />
+        </button>
+      </form>
 
       {/* Divider */}
       <div className="my-4 flex items-center gap-3">

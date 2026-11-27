@@ -31,12 +31,18 @@ Open http://localhost:3000
 
 ## Deriv OAuth Configuration
 
-The app uses Deriv's demo App ID (`1089`) by default. For production:
+The app uses Deriv OAuth 2.0 Authorization Code flow with PKCE. Configure a
+registered OAuth2 app in Deriv and set these values in `.env.local`:
 
-1. Register at https://api.deriv.com/dashboard
-2. Create an OAuth2 application
-3. Set the redirect URL to your app's origin
-4. Replace `DERIV_APP_ID` in `src/components/views/LoginView.tsx`
+```env
+DERIV_CLIENT_ID=your-deriv-client-id
+DERIV_REDIRECT_URI=http://localhost:3000/api/auth/deriv/callback
+```
+
+Register the exact `DERIV_REDIRECT_URI` with Deriv. It must match, including
+scheme, host, port, and path. If unset, local development uses the current
+origin with `/api/auth/deriv/callback`; configure the registered production
+callback URL in the deployment environment.
 
 ## Project Structure
 

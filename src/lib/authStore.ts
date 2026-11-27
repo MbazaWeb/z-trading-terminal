@@ -6,8 +6,9 @@ import { persist, createJSONStorage } from "zustand/middleware";
 // ---- Types ------------------------------------------------------------------
 
 export interface AccountInfo {
-  /** "CR123456" (Deriv real), "VR123456" (Deriv demo), "MT5-12345" (MetaTrader) */
+  /** Deriv account ID or local MetaTrader login label. */
   loginid: string;
+  accountType?: "real" | "demo";
   currency: string;
   balance: number;
   email: string;
@@ -78,7 +79,8 @@ export const useAuthStore = create<AuthState>()(
             ? "real"
             : "real";
         const pending = useAuthStore.getState().pendingAccountType;
-        const accountType: "real" | "demo" = pending ?? inferred;
+        const accountType: "real" | "demo" =
+          picked.accountType ?? pending ?? inferred;
         set({
           isAuthenticated: true,
           provider: "deriv",

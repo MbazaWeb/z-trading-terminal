@@ -12,8 +12,7 @@ interface TickerTapeProps {
   onSelectSymbol: (id: string) => void;
 }
 
-// Deterministic pseudo change-percent for non-active symbols so the tape
-// looks alive but stable. Re-evaluated each render is fine since it is cheap.
+// Deterministic pseudo change-percent for non-active symbols.
 function seededChange(symbol: SymbolInfo): number {
   let h = 2166136261;
   const s = symbol.id + "ticker";
@@ -22,8 +21,7 @@ function seededChange(symbol: SymbolInfo): number {
     h = Math.imul(h, 16777619);
   }
   h >>>= 0;
-  // Range roughly -6% .. +6%
-  return ((h % 1200) / 100 - 6) + Math.sin(Date.now() / 60000 + h) * 0.4;
+  return (h % 1200) / 100 - 6;
 }
 
 export function TickerTape({

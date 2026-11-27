@@ -4,98 +4,128 @@ import { useEffect, useRef } from "react";
 import { toast } from "sonner";
 import { useAuthStore, type AccountInfo } from "@/lib/authStore";
 
+function errorDescription(error: string): string {
+  switch (error) {
+    case "configuration":
+      return "Deriv OAuth is not configured. Check DERIV_CLIENT_ID and DERIV_REDIRECT_URI.";
+    case "invalid_state":
+      return "The Deriv sign-in could not be verified. Please try again.";
+    case "authorization_failed":
+      return "Deriv authorization was cancelled or rejected.";
+    case "token_exchange_failed":
+      return "Deriv could not complete sign-in. Check the registered redirect URI and client ID.";
+    case "account_lookup_failed":
+      return "Deriv sign-in succeeded, but trading accounts could not be loaded.";
+    case "no_accounts":
+      return "No active Deriv trading accounts were found.";
+    default:
+      return "Deriv sign-in was cancelled or could not be completed.";
+  }
+}
+
+function showDerivError(error: string) {
+  toast.error("Deriv login failed", { description: errorDescription(error) });
+  window.history.replaceState(null, "", window.location.pathname);
+}
+
+function completeLegacyCallback(
+  params: URLSearchParams,
+  loginWithDeriv: (token: string, accounts: AccountInfo[]) => void,
+) {
+  const error = params.get("error");
+  if (error) {
+    showDerivError(error);
+    return true;
+  }
+
+  const accessToken = params.get("access_token");
+  if (!accessToken) return false;
+
+  const accounts: AccountInfo[] = [];
+  for (let i = 1; ; i++) {
+    const loginid = params.get(`acct${i}`);
+    if (!loginid) break;
+    const accountType = params.get(`type${i}`);
+    const balance = Number(params.get(`bal${i}`));
+    accounts.push({
+      loginid,
+      accountType:
+        accountType === "demo" || accountType === "real"
+          ? accountType
+          : undefined,
+      currency: params.get(`cur${i}`) || "USD",
+      balance:
+        Number.isFinite(balance) && params.has(`bal${i}`)
+          ? balance
+          : loginid.startsWith("VR")
+            ? 10_000
+            : 5_000,
+      email: "",
+      name: `Deriv ${loginid}`,
+    });
+  }
+
+  if (accounts.length === 0) {
+    toast.error("No accounts returned by Deriv");
+    window.history.replaceState(null, "", window.location.pathname);
+    return true;
+  }
+
+  const pending = useAuthStore.getState().pendingAccountType;
+  const selected =
+    (pending &&
+      accounts.find(
+        (account) =>
+          account.accountType === pending ||
+          (pending === "demo" && account.loginid.startsWith("VR")) ||
+          (pending === "real" && account.loginid.startsWith("CR")),
+      )) ||
+    accounts[0];
+  loginWithDeriv(accessToken, [selected]);
+  window.history.replaceState(null, "", window.location.pathname);
+  toast.success(`Welcome back, ${selected.name || selected.loginid}`, {
+    description: `Connected via Deriv (${selected.loginid})`,
+  });
+  return true;
+}
+
 /**
  * Deriv OAuth redirect handler.
  *
- * Deriv returns the access token and account list in the URL *fragment*
- * (after the `#`). Example:
- *
- *   #access_token=xxx&acct1=CR123&token1=yyy&cur1=USD&acct2=VR456&token2=zzz&cur2=USD&...
- *
- * We parse that fragment, pick the account that matches the
- * `pendingAccountType` the user chose on the login screen (preferring `VR`
- * prefixes for demo and `CR` for real), then hand the result to the auth
- * store. If an `error` key is present instead, we surface a toast and stay on
- * the login screen.
+ * The authorization code is exchanged by the server; the legacy fragment
+ * handler remains for callbacks already in flight from the old Deriv flow.
  */
 export function useDerivCallback() {
   const loginWithDeriv = useAuthStore((s) => s.loginWithDeriv);
+  const hasHydrated = useAuthStore((s) => s._hasHydrated);
   const ranRef = useRef(false);
 
   useEffect(() => {
-    if (ranRef.current) return;
+    if (!hasHydrated || ranRef.current) return;
     // Guard against SSR / non-browser environments.
     if (typeof window === "undefined") return;
+
+    const query = new URLSearchParams(window.location.search);
+    const callbackError = query.get("deriv_error");
+    if (callbackError) {
+      ranRef.current = true;
+      showDerivError(callbackError);
+      return;
+    }
+
+    const providerError = query.get("error");
+    if (providerError) {
+      ranRef.current = true;
+      showDerivError(providerError);
+      return;
+    }
 
     const hash = window.location.hash;
     if (!hash || hash.length < 2) return;
 
-    const params = new URLSearchParams(hash.startsWith("#") ? hash.slice(1) : hash);
+    const params = new URLSearchParams(hash.slice(1));
+    if (!params.has("access_token") && !params.has("error")) return;
     ranRef.current = true;
-
-    const error = params.get("error");
-    if (error) {
-      toast.error("Deriv login failed", {
-        description: error.replace(/\+/g, " "),
-      });
-      // Clean the URL so a refresh does not replay the error.
-      window.history.replaceState(null, "", window.location.pathname);
-      return;
-    }
-
-    const accessToken = params.get("access_token");
-    if (!accessToken) {
-      // Nothing we can do here — let the user proceed normally.
-      return;
-    }
-
-    // Collect every account Deriv returned. Keys look like acct1 / cur1 / ...
-    const accounts: AccountInfo[] = [];
-    for (let i = 1; ; i++) {
-      const acct = params.get(`acct${i}`);
-      const cur = params.get(`cur${i}`);
-      if (!acct) break;
-      accounts.push({
-        loginid: acct,
-        currency: cur || "USD",
-        balance: 0, // Provider does not surface balance in the OAuth fragment.
-        email: "", // Will be fetched in a real integration via the WS API.
-        name: `Deriv ${acct}`,
-      });
-    }
-
-    if (accounts.length === 0) {
-      toast.error("No accounts returned by Deriv");
-      window.history.replaceState(null, "", window.location.pathname);
-      return;
-    }
-
-    const pending = useAuthStore.getState().pendingAccountType;
-    const wantReal = pending === "real";
-    const wantDemo = pending === "demo";
-
-    let selected = accounts[0];
-    if (wantDemo) {
-      selected =
-        accounts.find((a) => a.loginid.startsWith("VR")) || selected;
-    } else if (wantReal) {
-      selected =
-        accounts.find((a) => a.loginid.startsWith("CR")) || selected;
-    }
-
-    // Apply default balances since the OAuth fragment does not include them.
-    const isDemoAccount = selected.loginid.startsWith("VR");
-    selected = {
-      ...selected,
-      balance: isDemoAccount ? 10_000 : 5_000,
-    };
-
-    loginWithDeriv(accessToken, [selected]);
-
-    window.history.replaceState(null, "", window.location.pathname);
-
-    toast.success(`Welcome back, ${selected.name || selected.loginid}`, {
-      description: `Connected via Deriv (${selected.loginid})`,
-    });
-  }, [loginWithDeriv]);
+    completeLegacyCallback(params, loginWithDeriv);
+  }, [hasHydrated, loginWithDeriv]);
 }
