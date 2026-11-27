@@ -14,11 +14,29 @@ class Credentials(BaseModel):
     password: SecretStr
     server: str = Field(min_length=1, max_length=128)
 
+@app.get("/health")
+def health(authorization: str = Header(default="")):
+    key = os.environ.get("MT5_BRIDGE_KEY", "")
+    if len(key) < 32 or not secrets.compare_digest(authorization, "Bearer " + key):
+        raise HTTPException(401, "Unauthorized")
+    with lock:
+        try:
+            if not mt5.initialize(timeout=15000):
+                raise HTTPException(503, "Terminal unavailable")
+            a, t = mt5.account_info(), mt5.terminal_info()
+            if not a or not t or not t.connected or a.trade_mode != mt5.ACCOUNT_TRADE_MODE_DEMO or str(a.login) != os.environ.get("MT5_EXECUTION_LOGIN") or a.server != os.environ.get("MT5_EXECUTION_SERVER"):
+                raise HTTPException(503, "Allowlisted demo terminal unavailable")
+            return {"status": "ready", "accountType": "demo", "executionEnabled": os.environ.get("MT5_DEMO_EXECUTION") == "true", "agentExecutionEnabled": os.environ.get("MT5_AGENT_EXECUTION") == "true"}
+        finally:
+            mt5.shutdown()
+
 @app.post("/verify")
 def verify(body: Credentials, authorization: str = Header(default="")):
     key = os.environ.get("MT5_BRIDGE_KEY", "")
     if len(key) < 32 or not secrets.compare_digest(authorization, "Bearer " + key):
         raise HTTPException(401, "Unauthorized")
+    if str(body.login) != os.environ.get("MT5_EXECUTION_LOGIN") or body.server != os.environ.get("MT5_EXECUTION_SERVER"):
+        raise HTTPException(403, "Account not allowlisted")
     with lock:
         try:
             if not mt5.initialize(login=body.login, password=body.password.get_secret_value(), server=body.server, timeout=15000):
