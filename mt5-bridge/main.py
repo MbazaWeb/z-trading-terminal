@@ -157,11 +157,8 @@ def order(body: OrderRequest, authorization: str = Header(default="")):
             typ=mt5.ORDER_TYPE_BUY if buy else mt5.ORDER_TYPE_SELL
             margin=mt5.order_calc_margin(typ,body.symbol,body.volume,price)
             loss=mt5.order_calc_profit(typ,body.symbol,body.volume,price,body.sl)
-            if margin is None or loss is None or a.equity<=0 or margin>a.margin_free or loss>=0 or -loss>a.equity*0.01:
+            if margin is None or loss is None or not all(math.isfinite(x) for x in (margin,loss,a.equity,a.margin_free)) or a.equity<=0 or margin>a.margin_free or loss>=0 or -loss>a.equity*0.01:
                 raise HTTPException(400,"Margin or 1% estimated risk limit exceeded")
-            reason = check_portfolio(mt5, a, -loss)
-            if reason:
-                raise HTTPException(403, reason)
             if os.path.exists(os.environ.get("MT5_STOP_FILE","STOP_TRADING")):
                 raise HTTPException(403,"Emergency stop active")
             risk_error = check_portfolio(mt5,a,body.symbol,-loss)
@@ -186,6 +183,8 @@ def order(body: OrderRequest, authorization: str = Header(default="")):
                 except sqlite3.IntegrityError:
                     raise HTTPException(409,"Duplicate request; reconcile broker history")
                 if os.path.exists(os.environ.get("MT5_STOP_FILE","STOP_TRADING")):
+                    db.execute("UPDATE requests SET status=? WHERE id=?",("cancelled",str(body.request_id)))
+                    db.commit()
                     raise HTTPException(403,"Emergency stop active")
                 result=mt5.order_send(req)
                 status="confirmed" if result is not None and result.retcode==mt5.TRADE_RETCODE_DONE and result.deal else "uncertain"
@@ -410,3 +409,60 @@ def backtest_endpoint(body: BacktestRequest, authorization: str = Header(default
         return {"source":"MT5","symbol":body.symbol,"timeframe":"15m","bars":len(candles),**backtest(candles,list(dict.fromkeys(body.strategies)),body.cost,{})}
     except ValueError as e:
         raise HTTPException(400,str(e))
+
+from uuid import uuid5, NAMESPACE_URL
+import json
+
+@app.post("/agent-execute")
+def agent_execute(body: ScanRequest, authorization: str = Header(default="")):
+    key=os.environ.get("MT5_BRIDGE_KEY","")
+    if len(key)<32 or not secrets.compare_digest(authorization,"Bearer "+key):
+        raise HTTPException(401,"Unauthorized")
+    if os.environ.get("MT5_AGENT_EXECUTION")!="true" or os.environ.get("MT5_DEMO_EXECUTION")!="true" or str(body.login)!=os.environ.get("MT5_EXECUTION_LOGIN") or body.server!=os.environ.get("MT5_EXECUTION_SERVER"):
+        raise HTTPException(403,"Agent demo execution disabled")
+    report=scan_endpoint(body,authorization)
+    db_path=os.environ.get("MT5_ORDER_DB","mt5-orders.sqlite3")
+    outcomes=[]
+    for candidate in report["agents"]:
+        s=candidate["signal"]
+        if candidate["decision"]!="CANDIDATE":
+            outcomes.append({"symbol":s["symbol"],"status":"hold","stages":candidate["stages"]})
+            continue
+        rid=uuid5(NAMESPACE_URL,json.dumps([str(body.login),body.server,s["symbol"],s["candleTime"]]))
+        with sqlite3.connect(db_path) as db:
+            db.execute("CREATE TABLE IF NOT EXISTS agent_events (id TEXT PRIMARY KEY, login TEXT, server TEXT, created REAL, payload TEXT)")
+            inserted=db.execute("INSERT OR IGNORE INTO agent_events VALUES (?,?,?,?,?)",(str(rid),str(body.login),body.server,time.time(),json.dumps({"status":"reserved","candidate":candidate}))).rowcount
+        if not inserted:
+            outcomes.append({"symbol":s["symbol"],"status":"duplicate","requestId":str(rid)})
+            continue
+        try:
+            if not 0<=time.time()*1000-s["scannedAt"]<=30000:
+                raise HTTPException(400,"Candidate expired")
+            with lock:
+                try:
+                    if not mt5.initialize(timeout=15000):
+                        raise HTTPException(503,"Terminal unavailable")
+                    a=mt5.account_info()
+                    info=mt5.symbol_info(s["symbol"])
+                    if not a or a.login!=body.login or a.server!=body.server or a.trade_mode!=mt5.ACCOUNT_TRADE_MODE_DEMO or not info or not 0<info.volume_min<=0.01:
+                        raise HTTPException(400,"Demo symbol unavailable")
+                    volume=info.volume_min
+                    tick=info.trade_tick_size
+                    if not tick or tick<=0:
+                        raise HTTPException(400,"Invalid tick size")
+                    sl=round(round(s["sl"]/tick)*tick,info.digits)
+                    tp=round(round(s["tp"]/tick)*tick,info.digits)
+                finally:
+                    mt5.shutdown()
+            result=order(OrderRequest(login=body.login,server=body.server,request_id=rid,symbol=s["symbol"],side=s["side"].lower(),volume=volume,sl=sl,tp=tp),authorization)
+        except HTTPException as e:
+            result={"status":"blocked","reason":str(e.detail)}
+        except Exception:
+            result={"status":"uncertain","reason":"Execution outcome unavailable; inspect broker journal"}
+        event={"symbol":s["symbol"],"requestId":str(rid),**result,"stages":candidate["stages"][:-1]+[{"agent":"Execution","status":result["status"],"reason":result.get("reason","Broker response recorded")}]}
+        with sqlite3.connect(db_path) as db:
+            db.execute("UPDATE agent_events SET payload=? WHERE id=?",(json.dumps(event),str(rid)))
+        outcomes.append(event)
+        if result["status"]=="uncertain":
+            break
+    return {"source":"MT5","outcomes":outcomes}
