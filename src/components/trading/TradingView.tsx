@@ -2,11 +2,7 @@
 
 import { useCallback, useState } from "react";
 import { Header } from "@/components/trading/Header";
-import { StatsStrip } from "@/components/trading/StatsStrip";
 import { CandlestickChart } from "@/components/trading/CandlestickChart";
-import { OrderBook } from "@/components/trading/OrderBook";
-import { TradePanel } from "@/components/trading/TradePanel";
-import { BottomPanel } from "@/components/trading/BottomPanel";
 import type { MarketState } from "@/components/trading/useMarketData";
 import type { ChartType, IndicatorState } from "@/components/trading/types";
 
@@ -30,6 +26,7 @@ export function TradingView({ market }: { market: MarketState }) {
     setIndicators((prev) => ({ ...prev, [key]: !prev[key] }));
   }, []);
 
+  if (!market.quote || !market.candles.length) return <div className="p-6">MT5 market feed: {market.status}. No broker data available.</div>;
   return (
     <div className="flex flex-col">
       <Header
@@ -40,12 +37,7 @@ export function TradingView({ market }: { market: MarketState }) {
       />
 
       <main className="mx-auto w-full max-w-[1600px] flex-1 px-2 py-2 sm:px-3 sm:py-3">
-        <StatsStrip
-          stats={market.stats}
-          candles={market.candles}
-          symbol={market.activeSymbol}
-          direction={market.lastPriceDirection}
-        />
+        <div className="p-3 text-sm">MT5 • {market.status} {market.quote && <> | Bid: {market.quote.bid} | Ask: {market.quote.ask} | Spread: {market.quote.ask-market.quote.bid} | Quote: {new Date(market.quote.time).toISOString()}</>}</div>
 
         <div className="mt-2 grid grid-cols-1 gap-2 sm:mt-3 sm:gap-3 lg:grid-cols-[minmax(0,1fr)_340px] xl:grid-cols-[minmax(0,1fr)_360px]">
           <div className="min-h-[420px]">
@@ -62,27 +54,11 @@ export function TradingView({ market }: { market: MarketState }) {
           </div>
 
           <div className="flex flex-col gap-2 sm:gap-3">
-            <OrderBook
-              orderBook={market.orderBook}
-              symbol={market.activeSymbol}
-              lastPrice={market.livePrice}
-            />
-            <TradePanel
-              symbol={market.activeSymbol}
-              livePrice={market.livePrice}
-            />
+            <div className="p-4 text-sm">Market depth unavailable. Order execution disabled.</div>
           </div>
         </div>
 
-        <div className="mt-2 sm:mt-3">
-          <BottomPanel
-            trades={market.trades}
-            symbols={market.symbols}
-            activeSymbolId={market.activeSymbol.id}
-            livePrice={market.livePrice}
-            onSelectSymbol={market.selectSymbol}
-          />
-        </div>
+        <div className="p-3 text-xs">Chart volume is broker tick count, not traded quantity.</div>
       </main>
 
       <footer className="mt-auto border-t border-[var(--panel-border)] bg-[#070a11] px-4 py-3">
@@ -91,8 +67,7 @@ export function TradingView({ market }: { market: MarketState }) {
             Z TERMINAL
           </span>
           <span>
-            All market data is simulated for demonstration. No real orders are
-            executed.
+            MT5 broker feed. Read-only; no orders are executed.
           </span>
           <span className="font-mono tabular-nums">v1.0.0 / build 2024</span>
         </div>
