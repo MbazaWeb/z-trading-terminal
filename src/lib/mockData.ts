@@ -711,7 +711,7 @@ export const useStore = create<StoreState>((set, get) => ({
               {
                 id: liveId("blog"),
                 timestamp: s.simNow,
-                tag: "INFO",
+                tag: "INFO" as const,
                 message: "Bot stopped -- press Start to resume",
               },
               ...s.bot.log,
