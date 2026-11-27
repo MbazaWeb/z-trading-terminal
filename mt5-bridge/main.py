@@ -336,3 +336,32 @@ def reconciliation_loop():
 def start_reconciliation():
     if os.environ.get("MT5_DEMO_EXECUTION")=="true":
         threading.Thread(target=reconciliation_loop,daemon=True,name="mt5-reconciliation").start()
+
+from market_scanner import scan as scan_markets
+
+class ScanRequest(BaseModel):
+    login: int = Field(gt=0)
+    server: str = Field(min_length=1,max_length=128)
+    symbols: list[str] = Field(min_length=1,max_length=10)
+    strategy: str = "ensemble"
+
+@app.post("/scan")
+def scan_endpoint(body: ScanRequest, authorization: str = Header(default="")):
+    key=os.environ.get("MT5_BRIDGE_KEY","")
+    if len(key)<32 or not secrets.compare_digest(authorization,"Bearer "+key):
+        raise HTTPException(401,"Unauthorized")
+    if body.strategy not in ("ensemble","ma","bollinger","rsi","macd","trend","reversion","breakout") or any(not s or len(s)>128 for s in body.symbols):
+        raise HTTPException(400,"Invalid scanner configuration")
+    with lock:
+        try:
+            if not mt5.initialize(timeout=15000):
+                raise HTTPException(503,"Terminal unavailable")
+            a,t=mt5.account_info(),mt5.terminal_info()
+            if not a or not t or not t.connected or a.login!=body.login or a.server!=body.server or a.trade_mode!=mt5.ACCOUNT_TRADE_MODE_DEMO:
+                raise HTTPException(403,"Verified demo account unavailable")
+            instruments=mt5.symbols_get()
+            if instruments is None or not set(body.symbols).issubset({s.name for s in instruments if s.visible}):
+                raise HTTPException(400,"Select Market Watch symbols")
+            return {"source":"MT5","signals":scan_markets(mt5,list(dict.fromkeys(body.symbols)),body.strategy,os.environ.get("MT5_ORDER_DB","mt5-orders.sqlite3"))}
+        finally:
+            mt5.shutdown()
