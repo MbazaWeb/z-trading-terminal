@@ -14,7 +14,7 @@ import type { ChartType, IndicatorState } from "@/components/trading/types";
  * `useMarketData` instance (so the top TickerTape and this view stay in sync)
  * and passes it in via the `market` prop.
  */
-export function TradingView({ market }: { market: MarketState }) {
+export function TradingView({ market, canTrade, onSignIn }: { market: MarketState; canTrade: boolean; onSignIn: ()=>void }) {
 
   const [chartType, setChartType] = useState<ChartType>("candles");
   const [indicators, setIndicators] = useState<IndicatorState>({
@@ -27,7 +27,7 @@ export function TradingView({ market }: { market: MarketState }) {
     setIndicators((prev) => ({ ...prev, [key]: !prev[key] }));
   }, []);
 
-  if (!market.quote || !market.candles.length) return <div className="p-6">MT5 market feed: {market.status}. No broker data available.</div>;
+  if (!market.quote || !market.candles.length) return <section className="p-6"><h2 className="text-xl font-semibold">Market watch</h2><div className="mt-4 flex min-h-[320px] items-center justify-center rounded-lg border text-muted-foreground">MT5 market feed: {market.status}. No broker data available.</div>{!canTrade && <p className="mt-4 text-sm text-muted-foreground">Connect a demo account to unlock trading when the broker feed is available.</p>}</section>;
   return (
     <div className="flex flex-col">
       <Header
@@ -56,7 +56,7 @@ export function TradingView({ market }: { market: MarketState }) {
           </div>
 
           <div className="flex flex-col gap-2 sm:gap-3">
-            <Mt5OrderPanel key={market.activeSymbol.id} symbol={market.activeSymbol.id} ready={market.status==="ready"} />
+            {canTrade ? <Mt5OrderPanel key={market.activeSymbol.id} symbol={market.activeSymbol.id} ready={market.status==="ready"} /> : <div className="rounded-lg border p-5"><h2 className="font-semibold">Trading locked</h2><p className="my-3 text-sm text-muted-foreground">Sign in with a verified demo account to place orders.</p><button className="rounded bg-emerald-600 px-4 py-2 text-white" onClick={onSignIn}>Sign in</button></div>}
           </div>
         </div>
 

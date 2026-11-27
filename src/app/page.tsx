@@ -19,6 +19,7 @@ export default function Page() {
   // The shell owns the shared market-data instance so the top TickerTape and
   // the Trading view stay perfectly in sync (same symbol, same live price).
   const [view, setView] = useState<ViewId>("trading");
+  const [showLogin, setShowLogin] = useState(false);
 
   // --- Auth gate -------------------------------------------------------------
   // The auth store uses `skipHydration: true` so the first client render
@@ -33,9 +34,10 @@ export default function Page() {
   }, [hasHydrated]);
 
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
+  useEffect(()=>{if(isAuthenticated)setShowLogin(false);},[isAuthenticated]);
   const accountType = useAuthStore((s) => s.accountType);
   const provider = useAuthStore((s) => s.provider);
-  const market = useMarketData("", isAuthenticated && provider === "metatrader");
+  const market = useMarketData("", hasHydrated && (!isAuthenticated || provider === "metatrader"));
 
   // Handle the Deriv OAuth redirect (parses the URL hash on mount).
   useDerivCallback();
@@ -52,22 +54,22 @@ export default function Page() {
         // Reserve the layout during the very first client paint so the page
         // does not jump when the auth gate resolves.
         <div className="flex-1" />
-      ) : !isAuthenticated ? (
-        <LoginView />
-      ) : !accountType ? (
+      ) : !isAuthenticated && showLogin ? (
+        <><button className="self-start m-4 rounded border px-4 py-2" onClick={()=>setShowLogin(false)}>Back to markets</button><LoginView /></>
+      ) : isAuthenticated && !accountType ? (
         <AccountTypeSelect />
       ) : (
         <div className="flex min-w-0 flex-1 flex-col md:flex-row">
-          <Sidebar active={view} onSelect={setView} />
-          <main className="min-w-0 flex-1"><TerminalStatus provider={provider} marketStatus={market.status} onBot={()=>setView("bot")}/>
+          <Sidebar active={isAuthenticated ? view : "trading"} onSelect={id=>{if(!isAuthenticated && id!=="trading"){setShowLogin(true);return;}setView(id);}} />
+          <main className="min-w-0 flex-1">{isAuthenticated ? <TerminalStatus provider={provider} marketStatus={market.status} onBot={()=>setView("bot")}/> : <header className="flex items-center justify-between gap-3 border-b p-4"><div><h1 className="text-lg font-semibold">Market overview</h1><p className="text-xs text-muted-foreground">Guest access · Read-only</p></div><button className="rounded bg-emerald-600 px-4 py-2 font-semibold text-white" onClick={()=>setShowLogin(true)}>Sign in</button></header>}
             {/* Keyed wrapper so each view switch replays the fade transition. */}
             <div key={view} className="animate-view-enter">
-              {view === "trading" && <TradingView market={market} />}
-              {view === "dashboard" && (provider === "metatrader" ? <Mt5Dashboard /> : <div className="p-6">Deriv dashboard pending.</div>)}
-              {view === "strategies" && (provider === "metatrader" ? <StrategyDashboard symbols={market.symbols} /> : <div className="p-6">MT5 demo connection required.</div>)}
-              {view === "agents" && (provider === "metatrader" ? <AgentDashboard symbols={market.symbols} /> : <div className="p-6">MT5 demo required.</div>)}
-              {view === "bot" && (provider === "metatrader" ? <BotDashboard symbols={market.symbols}/> : <div className="p-6">MT5 demo required.</div>)}
-              {view === "reports" && (provider === "metatrader" ? <div className="p-4"><PerformancePanel/></div> : <div className="p-6">MT5 demo required.</div>)}
+              {(!isAuthenticated || view === "trading") && <TradingView market={market} canTrade={isAuthenticated && provider==="metatrader" && accountType==="demo"} onSignIn={()=>setShowLogin(true)} />}
+              {isAuthenticated && view === "dashboard" && (provider === "metatrader" ? <Mt5Dashboard /> : <div className="p-6">Deriv dashboard pending.</div>)}
+              {isAuthenticated && view === "strategies" && (provider === "metatrader" ? <StrategyDashboard symbols={market.symbols} /> : <div className="p-6">MT5 demo connection required.</div>)}
+              {isAuthenticated && view === "agents" && (provider === "metatrader" ? <AgentDashboard symbols={market.symbols} /> : <div className="p-6">MT5 demo required.</div>)}
+              {isAuthenticated && view === "bot" && (provider === "metatrader" ? <BotDashboard symbols={market.symbols}/> : <div className="p-6">MT5 demo required.</div>)}
+              {isAuthenticated && view === "reports" && (provider === "metatrader" ? <div className="p-4"><PerformancePanel/></div> : <div className="p-6">MT5 demo required.</div>)}
             </div>
           </main>
         </div>
