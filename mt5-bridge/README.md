@@ -1,20 +1,27 @@
-# MT5 read-only verification bridge
+# MT5 demo execution bridge
 
-Run on a dedicated Windows PC or VPS with MetaTrader 5 installed and Python 64-bit.
+Requires a dedicated Windows PC or VPS, 64-bit Python 3.12, and MetaTrader 5 logged into the exact demo account. Run from an interactive Windows session with access to that terminal.
 
-PowerShell:
+Set the following process environment variables securely:
+- MT5_BRIDGE_KEY: random secret of at least 32 characters.
+- MT5_EXECUTION_LOGIN: exact demo account number.
+- MT5_EXECUTION_SERVER: exact broker server name.
+- MT5_ORDER_DB: optional absolute persistent SQLite database path.
+- MT5_STOP_FILE: optional absolute emergency-stop file path.
+
+Run PowerShell from this directory:
+
+```powershell
+.\start-demo.ps1
 ```
-cd mt5-bridge
-py -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt
-$env:MT5_BRIDGE_KEY = "<random secret of at least 32 characters>"
-.\.venv\Scripts\python.exe -m uvicorn main:app --host 127.0.0.1 --port 8765
-```
 
-Expose only through an authenticated HTTPS reverse proxy or private gateway. Never expose the raw port publicly. Use a dedicated terminal, one worker, and demo credentials only. The bridge verifies accounts and returns a snapshot; it does not maintain a session or execute orders. Do not log request bodies. Configure rate limiting at the gateway. No credentials belong in Git.
+The launcher installs dependencies, verifies the connected demo account, forces both execution flags off, and binds the bridge to loopback port 8765 with one worker. It does not submit trades.
 
-Next.js server configuration: MT5_BRIDGE_URL (HTTPS base URL), MT5_BRIDGE_KEY (same secret). The API route is a preliminary integration endpoint; the frontend is not wired yet.
+Expose only through an authenticated HTTPS reverse proxy or private gateway. Never expose the raw port publicly. Do not log request bodies or authorization headers. Configure rate limiting. No credentials belong in Git.
 
+Next.js server-only preview configuration: MT5_BRIDGE_URL (HTTPS base URL), MT5_BRIDGE_KEY (same secret). Never prefix these with NEXT_PUBLIC_.
+
+After read-only connectivity and regression checks pass, a separate supervised launch may enable MT5_DEMO_EXECUTION=true for manual demo execution and MT5_AGENT_EXECUTION=true for agent execution. Both require the exact allowlisted demo account; the bot starts stopped. Do not use a real account.
 
 ## Background maintenance
-Run the Windows bridge with exactly one Uvicorn worker (no reload in operation). The maintenance thread polls the allowlisted demo account every 30 seconds and persists position recommendations and deduplicated broker deals in MT5_ORDER_DB. History lookback is 30 days per poll; outages longer than that require manual backfill. Bot scheduling remains in the same process and starts stopped after restart. Use an OS service supervisor for process restart. No automatic protective modifications are enabled by this worker.
+Use exactly one Uvicorn worker, without reload. The maintenance thread polls the allowlisted demo account every 30 seconds and persists position recommendations and deduplicated broker deals in MT5_ORDER_DB. History lookback is 30 days per poll; longer outages require manual backfill. Bot scheduling remains in the same process and starts stopped after restart. Use an OS supervisor that can access the logged-in terminal. No automatic protective modifications are enabled by this worker.
