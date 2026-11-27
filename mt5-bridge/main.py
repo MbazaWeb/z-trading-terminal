@@ -99,7 +99,7 @@ def account_snapshot(login: int, server: str, authorization: str = Header(defaul
                     "positions": [{"ticket": str(p.ticket), "symbol": p.symbol,
                                    "side": "Buy" if p.type == mt5.POSITION_TYPE_BUY else "Sell",
                                    "volume": p.volume, "open": p.price_open, "current": p.price_current,
-                                   "profit": p.profit, "swap": p.swap} for p in positions],
+                                   "profit": p.profit, "swap": p.swap, "sl": p.sl, "tp": p.tp} for p in positions],
                     "deals": [{"ticket": str(d.ticket), "symbol": d.symbol, "time": d.time,
                                "entry": d.entry, "type": d.type, "volume": d.volume,
                                "profit": d.profit, "commission": d.commission, "swap": d.swap, "fee": d.fee}
@@ -240,5 +240,73 @@ def close_position(body: CloseRequest, authorization: str = Header(default="")):
                 db.execute("UPDATE requests SET status=? WHERE id=?",(status,str(body.request_id)))
                 db.commit()
                 return {"status":status,"requestId":str(body.request_id),"ticket":str(p.ticket),"deal":str(result.deal) if result else None,"retcode":result.retcode if result else None}
+        finally:
+            mt5.shutdown()
+
+class ModifyRequest(CloseRequest):
+    sl: float = Field(gt=0)
+    tp: float = Field(gt=0)
+    expected_sl: float = Field(ge=0)
+    expected_tp: float = Field(ge=0)
+
+@app.post("/modify")
+def modify_position(body: ModifyRequest, authorization: str = Header(default="")):
+    key=os.environ.get("MT5_BRIDGE_KEY","")
+    if len(key)<32 or not secrets.compare_digest(authorization,"Bearer "+key):
+        raise HTTPException(401,"Unauthorized")
+    if os.environ.get("MT5_DEMO_EXECUTION")!="true" or str(body.login)!=os.environ.get("MT5_EXECUTION_LOGIN") or body.server!=os.environ.get("MT5_EXECUTION_SERVER"):
+        raise HTTPException(403,"Demo execution disabled")
+    if not all(math.isfinite(x) for x in (body.sl,body.tp,body.expected_sl,body.expected_tp)):
+        raise HTTPException(400,"Invalid protective prices")
+    with lock:
+        try:
+            if not mt5.initialize(timeout=15000):
+                raise HTTPException(503,"Terminal unavailable")
+            a,t=mt5.account_info(),mt5.terminal_info()
+            if not a or not t or not t.connected or not t.trade_allowed or not a.trade_allowed or not a.trade_expert or a.login!=body.login or a.server!=body.server or a.trade_mode!=mt5.ACCOUNT_TRADE_MODE_DEMO:
+                raise HTTPException(403,"Demo account not ready")
+            positions=mt5.positions_get(ticket=int(body.ticket))
+            if positions is None or len(positions)!=1:
+                raise HTTPException(404,"Position unavailable")
+            p=positions[0]
+            s,q=mt5.symbol_info(p.symbol),mt5.symbol_info_tick(p.symbol)
+            if not s or not q or not (0<=time.time()-q.time<=30) or q.bid<=0 or q.ask<q.bid or s.trade_tick_size<=0:
+                raise HTTPException(400,"Fresh quote unavailable")
+            if p.sl!=body.expected_sl or p.tp!=body.expected_tp:
+                raise HTTPException(409,"Position changed; refresh before editing")
+            buy=p.type==mt5.POSITION_TYPE_BUY
+            price=q.bid if buy else q.ask
+            distance=max(s.trade_stops_level,s.trade_freeze_level,1)*s.point
+            for level in (body.sl,body.tp):
+                if abs(level/s.trade_tick_size-round(level/s.trade_tick_size))>1e-6:
+                    raise HTTPException(400,"Price does not match broker tick size")
+            if not ((body.sl<=price-distance and body.tp>=price+distance) if buy else (body.sl>=price+distance and body.tp<=price-distance)):
+                raise HTTPException(400,"Invalid stop or target distance")
+            if p.sl>0 and ((buy and body.sl<p.sl) or (not buy and body.sl>p.sl)):
+                raise HTTPException(400,"Stop widening prohibited")
+            typ=mt5.ORDER_TYPE_BUY if buy else mt5.ORDER_TYPE_SELL
+            loss=mt5.order_calc_profit(typ,p.symbol,p.volume,price,body.sl)
+            if loss is None or not math.isfinite(loss) or a.equity<=0:
+                raise HTTPException(400,"Risk calculation unavailable")
+            if p.sl<=0 and -loss>a.equity*0.01:
+                raise HTTPException(400,"New protective stop exceeds 1% estimated risk")
+            req={"action":mt5.TRADE_ACTION_SLTP,"position":p.ticket,"symbol":p.symbol,"sl":body.sl,"tp":body.tp}
+            with sqlite3.connect(os.environ.get("MT5_ORDER_DB","mt5-orders.sqlite3")) as db:
+                db.execute("CREATE TABLE IF NOT EXISTS requests (id TEXT PRIMARY KEY, status TEXT NOT NULL)")
+                db.execute("CREATE TABLE IF NOT EXISTS modify_requests (ticket TEXT PRIMARY KEY, id TEXT NOT NULL)")
+                try:
+                    db.execute("INSERT INTO requests VALUES (?,?)",(str(body.request_id),"pending"))
+                    db.execute("INSERT INTO modify_requests VALUES (?,?)",(str(p.ticket),str(body.request_id)))
+                    db.commit()
+                except sqlite3.IntegrityError:
+                    raise HTTPException(409,"Modification already requested; reconcile broker state")
+                result=mt5.order_send(req)
+                updated=mt5.positions_get(ticket=p.ticket)
+                status="confirmed" if result is not None and result.retcode==mt5.TRADE_RETCODE_DONE and updated is not None and len(updated)==1 and abs(updated[0].sl-body.sl)<s.trade_tick_size/2 and abs(updated[0].tp-body.tp)<s.trade_tick_size/2 else "uncertain"
+                db.execute("UPDATE requests SET status=? WHERE id=?",(status,str(body.request_id)))
+                if status=="confirmed":
+                    db.execute("DELETE FROM modify_requests WHERE ticket=?",(str(p.ticket),))
+                db.commit()
+                return {"status":status,"requestId":str(body.request_id),"ticket":str(p.ticket),"retcode":result.retcode if result else None}
         finally:
             mt5.shutdown()

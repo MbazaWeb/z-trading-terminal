@@ -1,12 +1,29 @@
 "use client";
 import {useEffect,useState,useRef} from "react";
-type Snapshot={loginid:string;server:string;currency:string;balance:number;equity:number;margin:number;freeMargin:number;profit:number;leverage:number;asOf:string;positions:{ticket:string;symbol:string;side:string;volume:number;open:number;current:number;profit:number;swap:number}[];deals:{ticket:string;symbol:string;time:number;entry:number;type:number;volume:number;profit:number;commission:number;swap:number;fee:number}[]};
+type Snapshot={loginid:string;server:string;currency:string;balance:number;equity:number;margin:number;freeMargin:number;profit:number;leverage:number;asOf:string;positions:{ticket:string;symbol:string;side:string;volume:number;open:number;current:number;profit:number;swap:number;sl:number;tp:number}[];deals:{ticket:string;symbol:string;time:number;entry:number;type:number;volume:number;profit:number;commission:number;swap:number;fee:number}[]};
 export function Mt5Dashboard(){
  const [data,setData]=useState<Snapshot|null>(null);
  const [error,setError]=useState("");
  const [closing,setClosing]=useState<string|null>(null);
  const [notice,setNotice]=useState("");
  const closeLock=useRef(false);
+ const [edit,setEdit]=useState<{ticket:string;sl:string;tp:string;oldSl:number;oldTp:number}|null>(null);
+ const [modifyBlocked,setModifyBlocked]=useState<string[]>([]);
+ async function modify(){
+  if(!edit||closeLock.current||modifyBlocked.includes(edit.ticket))return;
+  const sl=Number(edit.sl),tp=Number(edit.tp);
+  if(!Number.isFinite(sl)||!Number.isFinite(tp)||sl<=0||tp<=0){setNotice("Enter valid positive prices");return;}
+  if(!window.confirm("Update protective levels on demo position #"+edit.ticket+"?"))return;
+  closeLock.current=true;setClosing(edit.ticket);
+  try{
+   const res=await fetch("/api/account/mt5/modify",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({ticket:edit.ticket,request_id:crypto.randomUUID(),sl,tp,expected_sl:edit.oldSl,expected_tp:edit.oldTp})});
+   const result=await res.json();
+   if(res.ok&&result.status==="confirmed"){setNotice("Broker confirmed SL/TP update");setEdit(null);}
+   else{setNotice(result.error||"Modification uncertain; verify MT5 position");if(res.ok||res.status>=500||res.status===409){setModifyBlocked(prev=>[...prev,edit.ticket]);setEdit(null);}}
+  }catch{setNotice("Modification outcome unknown; verify MT5 position");setModifyBlocked(prev=>[...prev,edit.ticket]);setEdit(null);}
+  finally{closeLock.current=false;setClosing(null);}
+ }
+
  const [blocked,setBlocked]=useState<string[]>([]);
  async function close(ticket:string){
   if(closeLock.current||blocked.includes(ticket)||!window.confirm("Close the full MT5 demo position #"+ticket+"?"))return;
@@ -39,6 +56,6 @@ export function Mt5Dashboard(){
  const money=(n:number)=>n.toLocaleString(undefined,{maximumFractionDigits:2,minimumFractionDigits:2})+" "+data.currency;
  return <section className="space-y-5 p-4"><h1 className="text-xl font-semibold">MT5 Account Dashboard</h1><p className="text-sm text-muted-foreground">Demo · {data.loginid} · {data.server} · Updated {new Date(data.asOf).toLocaleString()}</p>
  <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">{[["Balance",data.balance],["Equity",data.equity],["Used margin",data.margin],["Free margin",data.freeMargin],["Floating P/L",data.profit]].map(([label,value])=><div key={label} className="rounded-lg border p-4"><div className="text-sm text-muted-foreground">{label}</div><div className="text-xl font-semibold">{money(Number(value))}</div></div>)}<div className="rounded-lg border p-4">Leverage<div className="text-xl">1:{data.leverage}</div></div></div>
- <h2 className="font-semibold">Open positions ({data.positions.length})</h2><div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead><tr>{["Symbol","Side","Lots","Entry","Current","Profit","Swap","Action"].map(x=><th className="p-2" key={x}>{x}</th>)}</tr></thead><tbody>{data.positions.map(p=><tr key={p.ticket} className="border-t">{[p.symbol,p.side,p.volume,p.open,p.current,money(p.profit),money(p.swap)].map((x,i)=><td className="p-2" key={i}>{x}</td>)}<td><button disabled={closing!==null||blocked.includes(p.ticket)} onClick={()=>void close(p.ticket)} className="rounded border p-2 disabled:opacity-50">{closing===p.ticket?"Closing...":blocked.includes(p.ticket)?"Check history":"Close"}</button></td></tr>)}</tbody></table><p role="status">{notice}</p>{!data.positions.length&&<p>No open positions.</p>}</div>
+ <h2 className="font-semibold">Open positions ({data.positions.length})</h2><div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead><tr>{["Symbol","Side","Lots","Entry","Current","Profit","Swap","SL","TP","Action"].map(x=><th className="p-2" key={x}>{x}</th>)}</tr></thead><tbody>{data.positions.map(p=><tr key={p.ticket} className="border-t">{[p.symbol,p.side,p.volume,p.open,p.current,money(p.profit),money(p.swap),p.sl||"Not set",p.tp||"Not set"].map((x,i)=><td className="p-2" key={i}>{x}</td>)}<td><button disabled={closing!==null||blocked.includes(p.ticket)} onClick={()=>void close(p.ticket)} className="rounded border p-2 disabled:opacity-50">{closing===p.ticket?"Closing...":blocked.includes(p.ticket)?"Check history":"Close"}</button><button className="ml-2 rounded border p-2" disabled={closing!==null||blocked.includes(p.ticket)||modifyBlocked.includes(p.ticket)} onClick={()=>setEdit({ticket:p.ticket,sl:String(p.sl),tp:String(p.tp),oldSl:p.sl,oldTp:p.tp})}>Edit SL/TP</button></td></tr>)}</tbody></table>{edit&&<div className="space-y-2 rounded border p-3"><h3>Edit protective prices #{edit.ticket}</h3><label className="block">Stop loss<input type="number" step="any" className="ml-2 rounded border bg-background p-2" value={edit.sl} onChange={e=>setEdit({...edit,sl:e.target.value})}/></label><label className="block">Take profit<input type="number" step="any" className="ml-2 rounded border bg-background p-2" value={edit.tp} onChange={e=>setEdit({...edit,tp:e.target.value})}/></label><button disabled={closing!==null} className="rounded border p-2" onClick={()=>void modify()}>Save SL/TP</button><button disabled={closing!==null} className="ml-2 p-2" onClick={()=>setEdit(null)}>Cancel</button></div>}<p role="status">{notice}</p>{!data.positions.length&&<p>No open positions.</p>}</div>
  <h2 className="font-semibold">Broker deal history — last 30 days</h2><p className="text-xs text-muted-foreground">Individual execution deals, not grouped closed trades.</p><div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead><tr>{["Time","Symbol","Lots","Net P/L"].map(x=><th className="p-2" key={x}>{x}</th>)}</tr></thead><tbody>{data.deals.slice().reverse().map(d=><tr key={d.ticket} className="border-t"><td className="p-2">{new Date(d.time*1000).toLocaleString()}</td><td>{d.symbol}</td><td>{d.volume}</td><td>{money(d.profit+d.commission+d.swap+d.fee)}</td></tr>)}</tbody></table>{!data.deals.length&&<p>No execution deals returned.</p>}</div></section>;
 }
