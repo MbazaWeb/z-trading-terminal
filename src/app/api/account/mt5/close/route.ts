@@ -8,8 +8,8 @@ export async function POST(request:NextRequest){
  if(!session)return NextResponse.json({error:"Sign in again"},{status:401});
  try{
  const {request_id,ticket}=await request.json();
- if(typeof ticket!=="string"||!/^\d{1,15}$/.test(ticket))return NextResponse.json({error:"Invalid ticket"},{status:400});
- const res=await fetch(new URL("/close",url),{method:"POST",headers:{Authorization:"Bearer "+key,"Content-Type":"application/json"},body:JSON.stringify({request_id,ticket:Number(ticket),login:Number(session.login),server:session.server}),signal:AbortSignal.timeout(25000),cache:"no-store"});
+ if(typeof ticket!=="string"||!/^[1-9]\d{0,19}$/.test(ticket))return NextResponse.json({error:"Invalid ticket"},{status:400});
+ const res=await fetch(new URL("/close",url),{method:"POST",headers:{Authorization:"Bearer "+key,"Content-Type":"application/json"},body:JSON.stringify({request_id,ticket,login:Number(session.login),server:session.server}),signal:AbortSignal.timeout(25000),cache:"no-store"});
  const data=await res.json();
  return NextResponse.json(res.ok?data:{error:typeof data.detail==="string"?data.detail:"Broker request rejected"},{status:res.status,headers:{"Cache-Control":"no-store"}});
  }catch{return NextResponse.json({error:"Outcome unknown. Check broker history before retrying."},{status:502});}

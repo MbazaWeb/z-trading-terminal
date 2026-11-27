@@ -196,7 +196,7 @@ def order(body: OrderRequest, authorization: str = Header(default="")):
 class CloseRequest(BaseModel):
     login: int
     server: str
-    ticket: int = Field(gt=0)
+    ticket: str = Field(pattern=r"^[1-9][0-9]{0,19}$")
     request_id: UUID
 
 @app.post("/close")
@@ -213,7 +213,7 @@ def close_position(body: CloseRequest, authorization: str = Header(default="")):
             a,t=mt5.account_info(),mt5.terminal_info()
             if not a or not t or not t.connected or not t.trade_allowed or not a.trade_allowed or not a.trade_expert or a.login!=body.login or a.server!=body.server or a.trade_mode!=mt5.ACCOUNT_TRADE_MODE_DEMO:
                 raise HTTPException(403,"Demo account not ready")
-            positions=mt5.positions_get(ticket=body.ticket)
+            positions=mt5.positions_get(ticket=int(body.ticket))
             if positions is None or len(positions)!=1:
                 raise HTTPException(404,"Position unavailable")
             p=positions[0]
@@ -239,6 +239,6 @@ def close_position(body: CloseRequest, authorization: str = Header(default="")):
                 status="confirmed" if result is not None and result.retcode==mt5.TRADE_RETCODE_DONE and result.deal and remaining is not None and len(remaining)==0 else "uncertain"
                 db.execute("UPDATE requests SET status=? WHERE id=?",(status,str(body.request_id)))
                 db.commit()
-                return {"status":status,"deal":str(result.deal) if result else None}
+                return {"status":status,"requestId":str(body.request_id),"ticket":str(p.ticket),"deal":str(result.deal) if result else None,"retcode":result.retcode if result else None}
         finally:
             mt5.shutdown()
