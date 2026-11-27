@@ -11,6 +11,7 @@ import {
 import type { Candle, SymbolInfo, TickerStats } from "./types";
 
 interface StatsStripProps {
+  quote: {bid:number;ask:number;time:number}|null;
   stats: TickerStats;
   candles: Candle[];
   symbol: SymbolInfo;
@@ -104,6 +105,7 @@ function StatCard({
 }
 
 export function StatsStrip({
+  quote,
   stats,
   candles,
   symbol,
@@ -137,7 +139,7 @@ export function StatsStrip({
               direction === "down" && "text-glow-bear",
             )}
           >
-            {formatPrice(stats.lastPrice, decimals)}
+            {formatPrice(quote?stats.lastPrice:NaN, decimals)}
           </span>
           <Sparkline values={sparkValues} positive={up} />
         </div>
@@ -158,7 +160,7 @@ export function StatsStrip({
               <ArrowDown className="size-3.5" />
             )}
             {up ? "+" : ""}
-            {stats.changePercent.toFixed(2)}%
+            {Number.isFinite(stats.changePercent)?`${stats.changePercent.toFixed(2)}%`:"—"}
           </span>
           <span
             className={cn(
@@ -218,10 +220,10 @@ export function StatsStrip({
       <StatCard label="Bid / Ask">
         <div className="flex flex-col">
           <span className="font-mono text-sm font-semibold text-[var(--bear)] tabular-nums">
-            {formatPrice(stats.lastPrice * 0.9999, decimals)}
+            {formatPrice(quote?.bid??NaN, decimals)}
           </span>
           <span className="font-mono text-sm font-semibold text-[var(--bull)] tabular-nums">
-            {formatPrice(stats.lastPrice * 1.0001, decimals)}
+            {formatPrice(quote?.ask??NaN, decimals)}
           </span>
         </div>
       </StatCard>

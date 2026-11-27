@@ -46,6 +46,7 @@ export function OrderBook({ orderBook, symbol, lastPrice }: OrderBookProps) {
         <span className="text-right">Total</span>
       </div>
 
+      {!asks.length && !bids.length && <div className="p-6 text-center text-xs text-muted-foreground">Market depth unavailable</div>}
       {/* Asks */}
       <div className="flex flex-col justify-end">
         {asksDisplay.map((row, i) => {
@@ -96,7 +97,7 @@ export function OrderBook({ orderBook, symbol, lastPrice }: OrderBookProps) {
         <div className="flex flex-col items-end leading-none">
           <span className="text-[10px] text-muted-foreground">Spread</span>
           <span className="font-mono text-[11px] tabular-nums text-foreground/80">
-            {formatPrice(spread, decimals)} ({spreadPercent.toFixed(3)}%)
+            {formatPrice(spread, decimals)} ({Number.isFinite(spreadPercent)?`${spreadPercent.toFixed(3)}%`:"—"})
           </span>
         </div>
       </div>

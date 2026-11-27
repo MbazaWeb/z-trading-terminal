@@ -1,5 +1,6 @@
 "use client";
 
+import { TickerTape } from "@/components/trading/TickerTape";
 import { TerminalStatus } from "@/components/views/TerminalStatus";
 import { useEffect, useState } from "react";
 import { PerformancePanel } from "@/components/views/PerformancePanel";
@@ -48,6 +49,7 @@ export default function Page() {
   // client-only localStorage) never leaks a one-frame flash of the app.
   return (
     <div className="flex min-h-screen flex-col bg-background">
+      <TickerTape symbols={market.symbols} activeSymbolId={market.activeSymbol.id} livePrice={market.livePrice} activeChangePercent={market.stats.changePercent} onSelectSymbol={market.selectSymbol}/>
 
 
       {!hasHydrated ? (

@@ -1,30 +1,20 @@
 "use client";
 
 import { useMemo } from "react";
-import { SYMBOLS, formatPrice } from "./useMarketData";
+import { formatPrice } from "./useMarketData";
 import type { SymbolInfo } from "./types";
 import { cn } from "@/lib/utils";
 
 interface TickerTapeProps {
+  symbols: SymbolInfo[];
   activeSymbolId: string;
   livePrice: number;
   activeChangePercent: number;
   onSelectSymbol: (id: string) => void;
 }
 
-// Deterministic pseudo change-percent for non-active symbols.
-function seededChange(symbol: SymbolInfo): number {
-  let h = 2166136261;
-  const s = symbol.id + "ticker";
-  for (let i = 0; i < s.length; i++) {
-    h ^= s.charCodeAt(i);
-    h = Math.imul(h, 16777619);
-  }
-  h >>>= 0;
-  return (h % 1200) / 100 - 6;
-}
-
 export function TickerTape({
+  symbols,
   activeSymbolId,
   livePrice,
   activeChangePercent,
@@ -32,13 +22,13 @@ export function TickerTape({
 }: TickerTapeProps) {
   const items = useMemo(
     () =>
-      SYMBOLS.map((s) => {
+      symbols.map((s) => {
         const isActive = s.id === activeSymbolId;
-        const change = isActive ? activeChangePercent : seededChange(s);
-        const price = isActive ? livePrice : s.basePrice * (1 + change / 100);
+        const change = isActive ? activeChangePercent : NaN;
+        const price = isActive ? livePrice : NaN;
         return { symbol: s, price, change, isActive };
       }),
-    [activeSymbolId, livePrice, activeChangePercent],
+    [symbols, activeSymbolId, livePrice, activeChangePercent],
   );
 
   // Duplicate the list so the marquee loops seamlessly (translateX -50%).
@@ -47,6 +37,7 @@ export function TickerTape({
   return (
     <div className="relative z-30 h-8 overflow-hidden border-b border-[var(--panel-border)] bg-[#070a11]">
       <div className="animate-ticker flex h-full w-max items-center whitespace-nowrap">
+        {!loop.length && <span className="px-4 text-xs text-muted-foreground">Market feed unavailable</span>}
         {loop.map((item, idx) => {
           const up = item.change >= 0;
           return (
@@ -71,8 +62,7 @@ export function TickerTape({
                   up ? "text-[var(--bull)]" : "text-[var(--bear)]",
                 )}
               >
-                {up ? "+" : ""}
-                {item.change.toFixed(2)}%
+                {Number.isFinite(item.change) ? `${up?"+":""}${item.change.toFixed(2)}%` : "—"}
               </span>
             </button>
           );

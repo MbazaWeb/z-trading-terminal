@@ -22,6 +22,7 @@ export function priceDecimals(price: number): number {
 }
 
 export function formatPrice(price: number, decimals?: number): string {
+  if (!Number.isFinite(price)) return "—";
   const d = decimals ?? priceDecimals(price);
   return price.toLocaleString("en-US", {
     minimumFractionDigits: d,
@@ -30,6 +31,7 @@ export function formatPrice(price: number, decimals?: number): string {
 }
 
 export function formatCompact(value: number): string {
+  if (!Number.isFinite(value)) return "—";
   return Intl.NumberFormat("en-US", {
     notation: "compact",
     maximumFractionDigits: 2,
