@@ -370,3 +370,41 @@ def scan_endpoint(body: ScanRequest, authorization: str = Header(default="")):
             return {"source":"MT5","signals":scan_markets(mt5,list(dict.fromkeys(body.symbols)),body.strategy,os.environ.get("MT5_ORDER_DB","mt5-orders.sqlite3"),{k:getattr(body,k) for k in ("fast","slow","period","atr_multiplier","reward_risk")})}
         finally:
             mt5.shutdown()
+
+from backtest import backtest
+
+class BacktestRequest(BaseModel):
+    login: int = Field(gt=0)
+    server: str = Field(min_length=1,max_length=128)
+    symbol: str = Field(min_length=1,max_length=128)
+    bars: int = Field(default=1500,ge=400,le=5000)
+    cost: float = Field(ge=0)
+    strategies: list[str] = Field(min_length=1,max_length=8)
+
+@app.post("/backtest")
+def backtest_endpoint(body: BacktestRequest, authorization: str = Header(default="")):
+    key=os.environ.get("MT5_BRIDGE_KEY","")
+    if len(key)<32 or not secrets.compare_digest(authorization,"Bearer "+key):
+        raise HTTPException(401,"Unauthorized")
+    if not set(body.strategies).issubset({"ensemble","ma","bollinger","rsi","macd","trend","reversion","breakout"}):
+        raise HTTPException(400,"Unknown strategy")
+    with lock:
+        try:
+            if not mt5.initialize(timeout=15000):
+                raise HTTPException(503,"Terminal unavailable")
+            a,t=mt5.account_info(),mt5.terminal_info()
+            if not a or not t or not t.connected or a.login!=body.login or a.server!=body.server or a.trade_mode!=mt5.ACCOUNT_TRADE_MODE_DEMO:
+                raise HTTPException(403,"Verified demo account unavailable")
+            s=mt5.symbol_info(body.symbol)
+            if not s or not s.visible:
+                raise HTTPException(400,"Select a Market Watch symbol")
+            rates=mt5.copy_rates_from_pos(body.symbol,mt5.TIMEFRAME_M15,1,body.bars)
+            if rates is None or len(rates)<400:
+                raise HTTPException(503,"Historical data unavailable")
+            candles=[{k:float(r[k]) for k in ("time","open","high","low","close")} for r in rates]
+        finally:
+            mt5.shutdown()
+    try:
+        return {"source":"MT5","symbol":body.symbol,"timeframe":"15m","bars":len(candles),**backtest(candles,list(dict.fromkeys(body.strategies)),body.cost,{})}
+    except ValueError as e:
+        raise HTTPException(400,str(e))
