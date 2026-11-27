@@ -1,5 +1,6 @@
 "use client";
 
+import { TerminalStatus } from "@/components/views/TerminalStatus";
 import { useEffect, useState } from "react";
 import { PerformancePanel } from "@/components/views/PerformancePanel";
 import { BotDashboard } from "@/components/views/BotDashboard";
@@ -45,7 +46,7 @@ export default function Page() {
   // client-only localStorage) never leaks a one-frame flash of the app.
   return (
     <div className="flex min-h-screen flex-col bg-background">
-      <div className="border-b px-4 py-2 text-xs">MT5 market feed: {market.status}</div>
+
 
       {!hasHydrated ? (
         // Reserve the layout during the very first client paint so the page
@@ -56,9 +57,9 @@ export default function Page() {
       ) : !accountType ? (
         <AccountTypeSelect />
       ) : (
-        <div className="flex flex-1">
+        <div className="flex min-w-0 flex-1 flex-col md:flex-row">
           <Sidebar active={view} onSelect={setView} />
-          <main className="min-w-0 flex-1">
+          <main className="min-w-0 flex-1"><TerminalStatus provider={provider} marketStatus={market.status} onBot={()=>setView("bot")}/>
             {/* Keyed wrapper so each view switch replays the fade transition. */}
             <div key={view} className="animate-view-enter">
               {view === "trading" && <TradingView market={market} />}

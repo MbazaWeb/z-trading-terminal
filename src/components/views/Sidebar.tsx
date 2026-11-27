@@ -63,6 +63,8 @@ function NavButton({
     <button
       type="button"
       onClick={() => onSelect(item.id)}
+      aria-current={active ? "page" : undefined}
+      aria-label={item.label}
       title={collapsed ? item.label : undefined}
       className={cn(
         "group relative flex w-full items-center gap-3 rounded-md px-3 py-2.5 text-sm font-medium transition-all",
@@ -137,6 +139,7 @@ function UserAccountSection({ collapsed }: { collapsed: boolean }) {
   const balancePositive = accountInfo.balance > 0;
 
   const handleLogout = () => {
+    if(provider==="metatrader"&&!window.confirm("Sign out? The background bot may continue running. Stop it from the Bot page first if needed."))return;
     logout();
     toast.success("Signed out", {
       description: "You have been returned to the login screen.",
@@ -201,10 +204,11 @@ function UserAccountSection({ collapsed }: { collapsed: boolean }) {
               balancePositive ? "text-[var(--bull)]" : "text-[var(--bear)]",
             )}
           >
-            ${formatBalance(accountInfo.balance, accountInfo.currency)}
+            {formatBalance(accountInfo.balance, accountInfo.currency)}
           </span>
         </div>
 
+        <p className="mb-2 text-[10px] text-muted-foreground">Balance at sign-in · see Dashboard for current balance</p>
         {/* Logout */}
         <button
           type="button"
@@ -228,13 +232,13 @@ function SidebarFooter({ collapsed }: { collapsed: boolean }) {
       )}
     >
       <span className="relative flex size-2 shrink-0">
-        <span className="absolute inline-flex size-full animate-live rounded-full bg-[var(--bull)]" />
-        <span className="relative inline-flex size-2 rounded-full bg-[var(--bull)]" />
+        <span className="absolute inline-flex size-full rounded-full bg-muted-foreground" />
+        <span className="relative inline-flex size-2 rounded-full bg-muted-foreground" />
       </span>
       {!collapsed && (
         <div className="flex flex-1 items-center justify-between">
-          <span className="font-semibold tracking-wider text-[var(--bull)]">
-            LIVE
+          <span className="font-semibold tracking-wider text-muted-foreground">
+            TERMINAL
           </span>
           <span className="font-mono tabular-nums text-muted-foreground">
             v1.0.0

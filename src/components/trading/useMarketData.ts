@@ -93,7 +93,7 @@ export function useMarketData(_initialSymbolId = "", enabled = true): MarketStat
   const quote=feed?.quote??null;
   const livePrice=quote?.bid??0;
   const candles:Candle[]=(feed?.candles??[]).map(c=>({time:c.time,open:c.open,high:c.high,low:c.low,close:c.close,volume:c.tickVolume}));
-  const status=!enabled?"unavailable":!feed?(snapshot?.key===key&&snapshot.failed?"unavailable":"loading"):snapshot?.failed||Date.now()-feed.quote.time>60000?"stale":"ready";
+  const status=!enabled?"unavailable":!feed?(snapshot?.key===key&&snapshot.failed?"unavailable":"loading"):snapshot?.failed||(Date.now()-feed.quote.time>60000||feed.quote.time>Date.now()+5000)?"stale":"ready";
   const stats:TickerStats={lastPrice:livePrice,open24h:NaN,changeAbs:NaN,changePercent:NaN,high24h:NaN,low24h:NaN,volume24h:NaN,volumeBase24h:NaN};
   const orderBook:OrderBook={asks:[],bids:[],spread:quote?quote.ask-quote.bid:NaN,spreadPercent:quote?(quote.ask-quote.bid)/quote.bid*100:NaN,midPrice:quote?(quote.ask+quote.bid)/2:NaN};
   const selectSymbol=useCallback((id:string)=>setSymbol(id),[]);

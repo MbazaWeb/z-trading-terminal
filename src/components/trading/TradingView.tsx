@@ -38,6 +38,7 @@ export function TradingView({ market }: { market: MarketState }) {
       />
 
       <main className="mx-auto w-full max-w-[1600px] flex-1 px-2 py-2 sm:px-3 sm:py-3">
+        {market.status!=="ready"&&<p role="alert" className="rounded border border-amber-500/40 p-3 text-sm text-amber-500">Market feed is stale or unavailable. New orders are disabled.</p>}
         <div className="p-3 text-sm">MT5 • {market.status} {market.quote && <> | Bid: {market.quote.bid} | Ask: {market.quote.ask} | Spread: {market.quote.ask-market.quote.bid} | Quote: {new Date(market.quote.time).toISOString()}</>}</div>
 
         <div className="mt-2 grid grid-cols-1 gap-2 sm:mt-3 sm:gap-3 lg:grid-cols-[minmax(0,1fr)_340px] xl:grid-cols-[minmax(0,1fr)_360px]">
@@ -70,7 +71,7 @@ export function TradingView({ market }: { market: MarketState }) {
           <span>
             MT5 broker feed. Demo execution requires explicit server configuration.
           </span>
-          <span className="font-mono tabular-nums">v1.0.0 / build 2024</span>
+          <span className="font-mono tabular-nums">v1.0.0</span>
         </div>
       </footer>
     </div>
