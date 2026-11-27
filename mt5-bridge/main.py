@@ -466,3 +466,24 @@ def agent_execute(body: ScanRequest, authorization: str = Header(default="")):
         if result["status"]=="uncertain":
             break
     return {"source":"MT5","outcomes":outcomes}
+
+from position_agent import monitor
+
+@app.get("/position-monitor")
+def position_monitor(login: int, server: str, authorization: str = Header(default="")):
+    key=os.environ.get("MT5_BRIDGE_KEY","")
+    if len(key)<32 or not secrets.compare_digest(authorization,"Bearer "+key):
+        raise HTTPException(401,"Unauthorized")
+    with lock:
+        try:
+            if not mt5.initialize(timeout=15000):
+                raise HTTPException(503,"Terminal unavailable")
+            a,t=mt5.account_info(),mt5.terminal_info()
+            if not a or not t or not t.connected or a.login!=login or a.server!=server or a.trade_mode!=mt5.ACCOUNT_TRADE_MODE_DEMO:
+                raise HTTPException(403,"Verified demo account unavailable")
+            positions=mt5.positions_get()
+            if positions is None:
+                raise HTTPException(503,"Positions unavailable")
+            return {"source":"MT5","currency":a.currency,"floatingProfit":a.profit,"positions":monitor(mt5,positions),"checkedAt":int(time.time()*1000)}
+        finally:
+            mt5.shutdown()
