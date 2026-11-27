@@ -25,7 +25,7 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { useAuthStore } from "@/lib/authStore";
 
-export type ViewId = "trading" | "dashboard" | "agents" | "bot" | "reports";
+export type ViewId = "trading" | "dashboard" | "agents" | "bot" | "reports" | "strategies";
 
 interface NavItem {
   id: ViewId;
@@ -36,6 +36,7 @@ interface NavItem {
 const NAV_ITEMS: NavItem[] = [
   { id: "trading", label: "Trading", icon: CandlestickChart },
   { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
+  { id: "strategies", label: "Strategies", icon: Activity },
   { id: "agents", label: "Agents", icon: BrainCircuit },
   { id: "bot", label: "Bot", icon: Cpu },
   { id: "reports", label: "Reports", icon: FileText },

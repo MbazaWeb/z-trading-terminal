@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { StrategyDashboard } from "@/components/views/StrategyDashboard";
 import { Mt5Dashboard } from "@/components/views/Mt5Dashboard";
 import { useMarketData } from "@/components/trading/useMarketData";
 import { TradingView } from "@/components/trading/TradingView";
@@ -59,6 +60,7 @@ export default function Page() {
             <div key={view} className="animate-view-enter">
               {view === "trading" && <TradingView market={market} />}
               {view === "dashboard" && (provider === "metatrader" ? <Mt5Dashboard /> : <div className="p-6">Deriv dashboard pending.</div>)}
+              {view === "strategies" && (provider === "metatrader" ? <StrategyDashboard symbols={market.symbols} /> : <div className="p-6">MT5 demo connection required.</div>)}
               {view === "agents" && <div className="p-6">Unavailable until broker integration is complete.</div>}
               {view === "bot" && <div className="p-6">Unavailable until broker integration is complete.</div>}
               {view === "reports" && <div className="p-6">Unavailable until broker integration is complete.</div>}

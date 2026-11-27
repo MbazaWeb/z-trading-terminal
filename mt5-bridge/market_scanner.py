@@ -4,7 +4,8 @@ import math
 import sqlite3
 from strategy_engine import evaluate
 
-def scan(mt5, symbols, strategy, db_path):
+def scan(mt5, symbols, strategy, db_path, config=None):
+    config=config or {}
     results=[]
     for symbol in symbols:
         try:
@@ -20,9 +21,9 @@ def scan(mt5, symbols, strategy, db_path):
                 candles=[{k:float(r[k]) for k in ("time","open","high","low","close")} for r in rates]
                 if not (seconds<=time.time()-candles[-1]["time"]<=seconds*2+60):
                     raise ValueError("Closed candle history stale")
-                frames[label]=evaluate(candles,strategy)
+                frames[label]=evaluate(candles,strategy,**config)
             primary=frames["15m"]
-            signal={**primary,"symbol":symbol,"frames":frames,"source":"MT5","scannedAt":int(time.time()*1000)}
+            signal={**primary,"symbol":symbol,"frames":frames,"source":"MT5","config":config,"scannedAt":int(time.time()*1000)}
             if primary["side"]!="HOLD" and primary["side"]!=frames["1H"]["side"]:
                 signal.update(side="HOLD",reason="Higher timeframe does not confirm")
             results.append(signal)
@@ -34,6 +35,6 @@ def scan(mt5, symbols, strategy, db_path):
         if not a: raise ValueError("Account unavailable")
         for r in results:
             if r.get("candleTime") is None: continue
-            key=json.dumps([str(a.login),a.server,r["symbol"],strategy,r["candleTime"]])
+            key=json.dumps([str(a.login),a.server,r["symbol"],strategy,config,r["candleTime"]])
             db.execute("INSERT OR IGNORE INTO signals VALUES (?,?,?,?,?)",(key,str(a.login),a.server,r["scannedAt"],json.dumps(r,allow_nan=False)))
     return results

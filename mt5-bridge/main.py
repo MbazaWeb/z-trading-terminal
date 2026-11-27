@@ -344,13 +344,18 @@ class ScanRequest(BaseModel):
     server: str = Field(min_length=1,max_length=128)
     symbols: list[str] = Field(min_length=1,max_length=10)
     strategy: str = "ensemble"
+    fast: int = Field(default=10,ge=2,le=99)
+    slow: int = Field(default=30,ge=3,le=100)
+    period: int = Field(default=20,ge=5,le=100)
+    atr_multiplier: float = Field(default=2,ge=1,le=5)
+    reward_risk: float = Field(default=2,ge=1,le=5)
 
 @app.post("/scan")
 def scan_endpoint(body: ScanRequest, authorization: str = Header(default="")):
     key=os.environ.get("MT5_BRIDGE_KEY","")
     if len(key)<32 or not secrets.compare_digest(authorization,"Bearer "+key):
         raise HTTPException(401,"Unauthorized")
-    if body.strategy not in ("ensemble","ma","bollinger","rsi","macd","trend","reversion","breakout") or any(not s or len(s)>128 for s in body.symbols):
+    if body.fast>=body.slow or body.strategy not in ("ensemble","ma","bollinger","rsi","macd","trend","reversion","breakout") or any(not s or len(s)>128 for s in body.symbols):
         raise HTTPException(400,"Invalid scanner configuration")
     with lock:
         try:
@@ -362,6 +367,6 @@ def scan_endpoint(body: ScanRequest, authorization: str = Header(default="")):
             instruments=mt5.symbols_get()
             if instruments is None or not set(body.symbols).issubset({s.name for s in instruments if s.visible}):
                 raise HTTPException(400,"Select Market Watch symbols")
-            return {"source":"MT5","signals":scan_markets(mt5,list(dict.fromkeys(body.symbols)),body.strategy,os.environ.get("MT5_ORDER_DB","mt5-orders.sqlite3"))}
+            return {"source":"MT5","signals":scan_markets(mt5,list(dict.fromkeys(body.symbols)),body.strategy,os.environ.get("MT5_ORDER_DB","mt5-orders.sqlite3"),{k:getattr(body,k) for k in ("fast","slow","period","atr_multiplier","reward_risk")})}
         finally:
             mt5.shutdown()
