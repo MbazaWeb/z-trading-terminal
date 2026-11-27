@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useState } from "react";
+import { Mt5OrderPanel } from "@/components/trading/Mt5OrderPanel";
 import { Header } from "@/components/trading/Header";
 import { CandlestickChart } from "@/components/trading/CandlestickChart";
 import type { MarketState } from "@/components/trading/useMarketData";
@@ -54,7 +55,7 @@ export function TradingView({ market }: { market: MarketState }) {
           </div>
 
           <div className="flex flex-col gap-2 sm:gap-3">
-            <div className="p-4 text-sm">Market depth unavailable. Order execution disabled.</div>
+            <Mt5OrderPanel key={market.activeSymbol.id} symbol={market.activeSymbol.id} ready={market.status==="ready"} />
           </div>
         </div>
 
@@ -67,7 +68,7 @@ export function TradingView({ market }: { market: MarketState }) {
             Z TERMINAL
           </span>
           <span>
-            MT5 broker feed. Read-only; no orders are executed.
+            MT5 broker feed. Demo execution requires explicit server configuration.
           </span>
           <span className="font-mono tabular-nums">v1.0.0 / build 2024</span>
         </div>
