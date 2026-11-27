@@ -1,0 +1,21 @@
+name: MT5 regression
+on:
+  push:
+    branches: [development/mt5-real-connection]
+  pull_request:
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m compileall -q mt5-bridge
+      - run: python -m unittest discover -s mt5-bridge -p 'test_*.py' -v
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm install
+      - run: npx tsc --noEmit
+      - run: npm run build
