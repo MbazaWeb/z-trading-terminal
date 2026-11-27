@@ -410,7 +410,7 @@ def backtest_endpoint(body: BacktestRequest, authorization: str = Header(default
     except ValueError as e:
         raise HTTPException(400,str(e))
 
-from uuid import uuid5, NAMESPACE_URL
+from uuid import uuid5, uuid4, NAMESPACE_URL
 import json
 
 @app.post("/agent-execute")
@@ -430,7 +430,11 @@ def execute_candidates(body,authorization,allowed):
         if not allowed(): break
         s=candidate["signal"]
         if candidate["decision"]!="CANDIDATE":
-            outcomes.append({"symbol":s["symbol"],"status":"hold","stages":candidate["stages"]})
+            event={"symbol":s["symbol"],"status":"hold","candidate":candidate,"reason":s["reason"],"stages":candidate["stages"]}
+            with sqlite3.connect(db_path) as db:
+                db.execute("CREATE TABLE IF NOT EXISTS agent_events (id TEXT PRIMARY KEY, login TEXT, server TEXT, created REAL, payload TEXT)")
+                db.execute("INSERT INTO agent_events VALUES (?,?,?,?,?)",(str(uuid4()),str(body.login),body.server,time.time(),json.dumps(event)))
+            outcomes.append(event)
             continue
         rid=uuid5(NAMESPACE_URL,json.dumps([str(body.login),body.server,s["symbol"],s["candleTime"]]))
         with sqlite3.connect(db_path) as db:
@@ -465,7 +469,7 @@ def execute_candidates(body,authorization,allowed):
             result={"status":"blocked","reason":str(e.detail)}
         except Exception:
             result={"status":"uncertain","reason":"Execution outcome unavailable; inspect broker journal"}
-        event={"symbol":s["symbol"],"requestId":str(rid),**result,"stages":candidate["stages"][:-1]+[{"agent":"Execution","status":result["status"],"reason":result.get("reason","Broker response recorded")}]}
+        event={"symbol":s["symbol"],"candidate":candidate,"requestId":str(rid),**result,"stages":candidate["stages"][:-1]+[{"agent":"Execution","status":result["status"],"reason":result.get("reason","Broker response recorded")}]}
         with sqlite3.connect(db_path) as db:
             db.execute("UPDATE agent_events SET payload=? WHERE id=?",(json.dumps(event),str(rid)))
         outcomes.append(event)
@@ -556,3 +560,12 @@ def bot_status(login: int, server: str, authorization: str = Header(default=""))
         raise HTTPException(403,"Account not allowed")
     if bot is None: raise HTTPException(503,"Scheduler unavailable")
     return bot.snapshot()
+
+from fastapi.responses import Response
+from report_export import render
+
+@app.get("/performance/export")
+def export_performance(login: int, server: str, fmt: Literal["xlsx","pdf"], authorization: str = Header(default="")):
+    report=performance(login,server,authorization)
+    content=render(report,fmt)
+    return Response(content,media_type="application/pdf" if fmt=="pdf" else "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",headers={"Content-Disposition":f'attachment; filename="mt5-report.{fmt}"',"Cache-Control":"no-store"})
