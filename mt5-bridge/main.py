@@ -569,3 +569,44 @@ def export_performance(login: int, server: str, fmt: Literal["xlsx","pdf"], auth
     report=performance(login,server,authorization)
     content=render(report,fmt)
     return Response(content,media_type="application/pdf" if fmt=="pdf" else "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",headers={"Content-Disposition":f'attachment; filename="mt5-report.{fmt}"',"Cache-Control":"no-store"})
+
+from maintenance_worker import MaintenanceWorker
+maintenance=None
+
+def collect_maintenance():
+    with lock:
+        try:
+            if not mt5.initialize(timeout=15000):
+                raise RuntimeError("Terminal unavailable")
+            a,t=mt5.account_info(),mt5.terminal_info()
+            if not a or not t or not t.connected or a.trade_mode!=mt5.ACCOUNT_TRADE_MODE_DEMO or str(a.login)!=os.environ.get("MT5_EXECUTION_LOGIN") or a.server!=os.environ.get("MT5_EXECUTION_SERVER"):
+                raise RuntimeError("Demo account unavailable")
+            positions=mt5.positions_get()
+            now=datetime.now(timezone.utc)
+            deals=mt5.history_deals_get(now-timedelta(days=30),now)
+            if positions is None or deals is None:
+                raise RuntimeError("Broker data incomplete")
+            rows=[{"ticket":str(d.ticket),"positionId":str(d.position_id),"symbol":d.symbol,"entry":int(d.entry),"type":int(d.type),"reason":int(d.reason),"time":d.time_msc,"volume":d.volume,"profit":d.profit,"commission":d.commission,"swap":d.swap,"fee":d.fee} for d in deals]
+            return {"currency":a.currency,"floatingProfit":a.profit,"positions":monitor(mt5,positions)},rows
+        finally:
+            mt5.shutdown()
+
+@app.on_event("startup")
+def start_maintenance():
+    global maintenance
+    if os.environ.get("MT5_EXECUTION_LOGIN") and os.environ.get("MT5_EXECUTION_SERVER"):
+        maintenance=MaintenanceWorker(os.environ.get("MT5_ORDER_DB","mt5-orders.sqlite3"),json.dumps([os.environ["MT5_EXECUTION_LOGIN"],os.environ["MT5_EXECUTION_SERVER"]]),collect_maintenance)
+
+@app.on_event("shutdown")
+def stop_maintenance():
+    if maintenance: maintenance.stop.set()
+
+@app.get("/worker")
+def worker_status(login: int, server: str, authorization: str = Header(default="")):
+    key=os.environ.get("MT5_BRIDGE_KEY","")
+    if len(key)<32 or not secrets.compare_digest(authorization,"Bearer "+key):
+        raise HTTPException(401,"Unauthorized")
+    if str(login)!=os.environ.get("MT5_EXECUTION_LOGIN") or server!=os.environ.get("MT5_EXECUTION_SERVER"):
+        raise HTTPException(403,"Account not allowed")
+    if maintenance is None: raise HTTPException(503,"Worker unavailable")
+    return maintenance.status()
