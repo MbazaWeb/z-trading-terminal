@@ -109,6 +109,7 @@ def account_snapshot(login: int, server: str, authorization: str = Header(defaul
 
 # Demo execution is opt-in and restricted to a dedicated account.
 from risk import check_portfolio
+from execution_result import classify
 from reconciliation import record, reconcile
 import sqlite3
 import math
@@ -186,7 +187,7 @@ def order(body: OrderRequest, authorization: str = Header(default="")):
                     db.commit()
                     raise HTTPException(403,"Emergency stop active")
                 result=mt5.order_send(req)
-                status="confirmed" if result is not None and result.retcode==mt5.TRADE_RETCODE_DONE and result.deal else "uncertain"
+                status=classify(mt5,result)
                 db.execute("UPDATE requests SET status=? WHERE id=?",(status,str(body.request_id)))
                 db.commit()
                 return {"status":status,"requestId":str(body.request_id),"retcode":result.retcode if result else None,"deal":str(result.deal) if result else None,"order":str(result.order) if result else None}
@@ -237,8 +238,10 @@ def close_position(body: CloseRequest, authorization: str = Header(default="")):
                     raise HTTPException(409,"Close already requested; reconcile broker history")
                 result=mt5.order_send(req)
                 remaining=mt5.positions_get(ticket=p.ticket)
-                status="confirmed" if result is not None and result.retcode==mt5.TRADE_RETCODE_DONE and result.deal and remaining is not None and len(remaining)==0 else "uncertain"
+                status=classify(mt5,result,verified=remaining is not None and len(remaining)==0)
                 db.execute("UPDATE requests SET status=? WHERE id=?",(status,str(body.request_id)))
+                if status=="rejected":
+                    db.execute("DELETE FROM close_requests WHERE ticket=?",(str(p.ticket),))
                 db.commit()
                 return {"status":status,"requestId":str(body.request_id),"ticket":str(p.ticket),"deal":str(result.deal) if result else None,"retcode":result.retcode if result else None}
         finally:
@@ -304,9 +307,9 @@ def modify_position(body: ModifyRequest, authorization: str = Header(default="")
                     raise HTTPException(409,"Modification already requested; reconcile broker state")
                 result=mt5.order_send(req)
                 updated=mt5.positions_get(ticket=p.ticket)
-                status="confirmed" if result is not None and result.retcode==mt5.TRADE_RETCODE_DONE and updated is not None and len(updated)==1 and abs(updated[0].sl-body.sl)<s.trade_tick_size/2 and abs(updated[0].tp-body.tp)<s.trade_tick_size/2 else "uncertain"
+                status=classify(mt5,result,verified=updated is not None and len(updated)==1 and abs(updated[0].sl-body.sl)<s.trade_tick_size/2 and abs(updated[0].tp-body.tp)<s.trade_tick_size/2,require_deal=False)
                 db.execute("UPDATE requests SET status=? WHERE id=?",(status,str(body.request_id)))
-                if status=="confirmed":
+                if status in ("confirmed","rejected"):
                     db.execute("DELETE FROM modify_requests WHERE ticket=?",(str(p.ticket),))
                 db.commit()
                 return {"status":status,"requestId":str(body.request_id),"ticket":str(p.ticket),"retcode":result.retcode if result else None}
