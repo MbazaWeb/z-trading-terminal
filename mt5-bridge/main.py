@@ -510,3 +510,43 @@ def performance(login: int, server: str, authorization: str = Header(default="")
                 return {"source":"MT5","currency":a.currency,"days":30,**summarize(mt5,deals,db,a)}
         finally:
             mt5.shutdown()
+
+from bot_scheduler import Bot
+bot=None
+
+def bot_cycle(config):
+    return agent_execute(config,"Bearer "+os.environ.get("MT5_BRIDGE_KEY",""))
+
+@app.on_event("startup")
+def start_bot_scheduler():
+    global bot
+    bot=Bot(bot_cycle)
+
+class BotControl(ScanRequest):
+    action: Literal["start","pause","stop"]
+
+@app.post("/bot")
+def bot_control(body: BotControl, authorization: str = Header(default="")):
+    key=os.environ.get("MT5_BRIDGE_KEY","")
+    if len(key)<32 or not secrets.compare_digest(authorization,"Bearer "+key):
+        raise HTTPException(401,"Unauthorized")
+    if str(body.login)!=os.environ.get("MT5_EXECUTION_LOGIN") or body.server!=os.environ.get("MT5_EXECUTION_SERVER"):
+        raise HTTPException(403,"Account not allowed")
+    if bot is None: raise HTTPException(503,"Scheduler unavailable")
+    if body.action=="start" and (os.environ.get("MT5_AGENT_EXECUTION")!="true" or os.environ.get("MT5_DEMO_EXECUTION")!="true"):
+        raise HTTPException(403,"Demo execution disabled")
+    try:
+        bot.control(body.action,body)
+    except ValueError as e:
+        raise HTTPException(409,str(e))
+    return bot.snapshot()
+
+@app.get("/bot")
+def bot_status(login: int, server: str, authorization: str = Header(default="")):
+    key=os.environ.get("MT5_BRIDGE_KEY","")
+    if len(key)<32 or not secrets.compare_digest(authorization,"Bearer "+key):
+        raise HTTPException(401,"Unauthorized")
+    if str(login)!=os.environ.get("MT5_EXECUTION_LOGIN") or server!=os.environ.get("MT5_EXECUTION_SERVER"):
+        raise HTTPException(403,"Account not allowed")
+    if bot is None: raise HTTPException(503,"Scheduler unavailable")
+    return bot.snapshot()
