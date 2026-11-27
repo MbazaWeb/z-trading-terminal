@@ -18,7 +18,12 @@ def evaluate(candles, strategy="ensemble", fast=10, slow=30, period=20, atr_mult
     if len(candles)<max(slow+2,period+2,40):
         return hold("Insufficient closed candles")
     for i,c in enumerate(candles):
-        o,h,l,p,t=(c[k] for k in ("open","high","low","close","time"))
+        try:
+            o,h,l,p,t=(float(c[k]) for k in ("open","high","low","close","time"))
+            if not all(isinstance(c[k],(int,float)) and not isinstance(c[k],bool) for k in ("open","high","low","close","time")):
+                return hold("Invalid candle series")
+        except (KeyError,TypeError,ValueError,OverflowError):
+            return hold("Invalid candle series")
         if not all(math.isfinite(x) for x in (o,h,l,p,t)) or l<=0 or h<max(o,p) or l>min(o,p) or (i and t<=candles[i-1]["time"]):
             return hold("Invalid candle series")
     x=[c["close"] for c in candles]

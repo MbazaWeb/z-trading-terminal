@@ -17,7 +17,9 @@ def assess(mt5, account, signals):
         candidate=s["side"] in ("BUY","SELL")
         stage("Strategy","pass" if candidate else "reject",s["reason"])
         reason="No directional signal"
-        if candidate:
+        if candidate and not frames:
+            reason="Validated candle frames required"
+        elif candidate:
             q=mt5.symbol_info_tick(symbol)
             info=mt5.symbol_info(symbol)
             if not q or not info or not (0<=time.time()-q.time<=30) or not (0<q.bid<=q.ask):
