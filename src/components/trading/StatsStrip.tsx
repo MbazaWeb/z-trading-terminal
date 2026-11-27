@@ -96,7 +96,7 @@ function StatCard({
         className,
       )}
     >
-      <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+      <span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
         {label}
       </span>
       {children}

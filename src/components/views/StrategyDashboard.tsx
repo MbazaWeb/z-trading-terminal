@@ -29,7 +29,7 @@ export function StrategyDashboard({symbols}:{symbols:{id:string;name:string}[]})
   finally{lock.current=false;setBusy(false);}
  }
  const field="rounded border bg-background p-2";
- return <section className="space-y-5 p-4"><header><h1 className="text-xl font-semibold">Strategy configuration</h1><p className="text-sm text-muted-foreground">MT5 demo · Analysis only · M15 + H1 confirmation</p></header>
+ return <section className="space-y-4 p-3"><header><h1 className="text-xl font-semibold">Strategy configuration</h1><p className="text-sm text-muted-foreground">MT5 demo · Analysis only · M15 + H1 confirmation</p></header>
  <fieldset disabled={busy} className="space-y-4 rounded-lg border p-4"><legend>Scanner settings</legend>
  <label className="block">Strategy <select className={field} value={strategy} onChange={e=>setStrategy(e.target.value)}>{strategies.map(([id,label])=><option key={id} value={id}>{label}</option>)}</select></label>
  <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">{(Object.keys(defaults) as (keyof typeof defaults)[]).map(k=><label key={k} className="text-sm">{({fast:"Fast MA",slow:"Slow MA",period:"Bollinger period",atr_multiplier:"ATR multiplier",reward_risk:"Reward/risk"})[k]}<input className={field+" w-full"} type="number" step={k==="atr_multiplier"||k==="reward_risk" ? 0.1 : 1} value={config[k]} onChange={e=>setConfig({...config,[k]:e.target.valueAsNumber})}/></label>)}</div>

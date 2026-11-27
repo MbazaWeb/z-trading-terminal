@@ -29,9 +29,9 @@ export function OrderBook({ orderBook, symbol, lastPrice }: OrderBookProps) {
   const lastUp = lastPrice >= orderBook.midPrice;
 
   return (
-    <section className="flex flex-col rounded-xl border border-[var(--panel-border)] bg-[#0d1117] animate-fade-in-up">
+    <section className="flex flex-col rounded-md border border-[var(--panel-border)] bg-[#0d1117] animate-fade-in-up">
       <div className="flex items-center justify-between border-b border-[var(--panel-border)] px-3 py-2">
-        <h2 className="text-xs font-semibold uppercase tracking-wider text-foreground">
+        <h2 className="text-xs font-semibold uppercase tracking-wide text-foreground">
           Order Book
         </h2>
         <span className="text-[11px] text-muted-foreground">
@@ -40,7 +40,7 @@ export function OrderBook({ orderBook, symbol, lastPrice }: OrderBookProps) {
       </div>
 
       {/* Column headers */}
-      <div className="grid grid-cols-3 px-3 py-1.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+      <div className="grid grid-cols-3 px-3 py-1.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
         <span className="text-left">Price</span>
         <span className="text-right">Amount</span>
         <span className="text-right">Total</span>

@@ -48,7 +48,7 @@ export function BottomPanel({
   );
 
   return (
-    <section className="flex flex-col rounded-xl border border-[var(--panel-border)] bg-[#0d1117] animate-fade-in-up">
+    <section className="flex flex-col rounded-md border border-[var(--panel-border)] bg-[#0d1117] animate-fade-in-up">
       <Tabs defaultValue="pairs" className="flex h-full flex-col gap-0">
         <div className="flex items-center justify-between border-b border-[var(--panel-border)] px-2 py-1.5">
           <TabsList className="h-8 bg-[#0a0e17] p-0.5">
@@ -78,7 +78,7 @@ export function BottomPanel({
 
         {/* Trades */}
         <TabsContent value="trades" className="mt-0 flex-1 outline-none">
-          <div className="grid grid-cols-3 px-3 py-1.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+          <div className="grid grid-cols-3 px-3 py-1.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
             <span className="text-left">Price</span>
             <span className="text-right">Amount</span>
             <span className="text-right">Time</span>
@@ -123,7 +123,7 @@ export function BottomPanel({
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs">
               <thead>
-                <tr className="border-b border-[var(--panel-border)] text-[10px] uppercase tracking-wider text-muted-foreground">
+                <tr className="border-b border-[var(--panel-border)] text-[10px] uppercase tracking-wide text-muted-foreground">
                   <th className="px-3 py-1.5 font-medium">Order ID</th>
                   <th className="px-3 py-1.5 font-medium">Pair</th>
                   <th className="px-3 py-1.5 font-medium">Type</th>
@@ -144,7 +144,7 @@ export function BottomPanel({
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs">
               <thead>
-                <tr className="border-b border-[var(--panel-border)] text-[10px] uppercase tracking-wider text-muted-foreground">
+                <tr className="border-b border-[var(--panel-border)] text-[10px] uppercase tracking-wide text-muted-foreground">
                   <th className="px-3 py-1.5 font-medium">Pair</th>
                   <th className="px-3 py-1.5 text-right font-medium">
                     Last Price
@@ -174,7 +174,7 @@ export function BottomPanel({
                             {p.symbol.label}
                           </span>
                           {p.isActive && (
-                            <span className="size-1.5 rounded-full bg-[var(--bull)] shadow-[0_0_6px_rgba(22,199,132,0.8)]" />
+                            <span className="size-1.5 rounded-full bg-[var(--bull)] " />
                           )}
                         </div>
                       </td>

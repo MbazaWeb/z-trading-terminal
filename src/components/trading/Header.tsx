@@ -72,18 +72,18 @@ export function Header({
     <header className="sticky top-0 z-20 flex h-14 items-center justify-between gap-3 border-b border-[var(--panel-border)] bg-[#0a0e17]/95 px-3 backdrop-blur sm:px-4">
       {/* Left: Logo */}
       <div className="flex items-center gap-2.5">
-        <div className="flex size-8 items-center justify-center rounded-md bg-gradient-to-br from-[var(--bull)] to-[#0e7a4d] text-[#0a0e17] shadow-[0_0_12px_rgba(22,199,132,0.45)]">
+        <div className="flex size-8 items-center justify-center rounded-md bg-[var(--bull)] text-[#0a0e17] ">
           <Zap className="size-5" strokeWidth={2.5} />
         </div>
         <div className="hidden flex-col leading-none sm:flex">
-          <span className="text-sm font-bold tracking-wider text-foreground">
+          <span className="text-sm font-bold tracking-wide text-foreground">
             Z TERMINAL
           </span>
           <span className="text-[10px] font-medium tracking-wide text-muted-foreground">
             MARKET DATA
           </span>
         </div>
-        <span className="text-sm font-bold tracking-wider text-foreground sm:hidden">
+        <span className="text-sm font-bold tracking-wide text-foreground sm:hidden">
           Z
         </span>
       </div>
@@ -112,7 +112,7 @@ export function Header({
             align="center"
             className="w-[280px] border-[var(--panel-border)] bg-[#0d1117] p-1"
           >
-            <DropdownMenuLabel className="px-2 py-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+            <DropdownMenuLabel className="px-2 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
               Select Market
             </DropdownMenuLabel>
             <DropdownMenuSeparator className="bg-[var(--panel-border)]" />
@@ -141,7 +141,7 @@ export function Header({
                         {formatPrice(s.basePrice)}
                       </span>
                       {isActive && (
-                        <span className="size-1.5 rounded-full bg-[var(--bull)] shadow-[0_0_6px_rgba(22,199,132,0.8)]" />
+                        <span className="size-1.5 rounded-full bg-[var(--bull)] " />
                       )}
                     </div>
                   </DropdownMenuItem>
@@ -162,10 +162,10 @@ export function Header({
         </div>
         <div className="flex items-center gap-1.5 rounded-md border border-[var(--panel-border)] bg-[#0d1117] px-2 py-1">
           <span className="relative flex size-2">
-            <span className="absolute inline-flex size-full animate-live rounded-full bg-[var(--bull)]" />
+            <span className="absolute inline-flex size-full rounded-full bg-[var(--bull)]" />
             <span className="relative inline-flex size-2 rounded-full bg-[var(--bull)]" />
           </span>
-          <span className="text-[11px] font-semibold tracking-wider text-[var(--bull)]">
+          <span className="text-[11px] font-semibold tracking-wide text-[var(--bull)]">
             LIVE
           </span>
         </div>

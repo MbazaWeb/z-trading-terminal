@@ -76,7 +76,7 @@ function NavButton({
     >
       {active && (
         <span
-          className="absolute inset-y-1.5 left-0 w-0.5 rounded-full bg-[var(--bull)] shadow-[0_0_8px_rgba(22,199,132,0.7)]"
+          className="absolute inset-y-1.5 left-0 w-0.5 rounded-full bg-[var(--bull)] "
           aria-hidden="true"
         />
       )}
@@ -102,12 +102,12 @@ function SidebarBrand({ collapsed }: { collapsed: boolean }) {
         collapsed && "justify-center px-0",
       )}
     >
-      <div className="flex size-8 shrink-0 items-center justify-center rounded-md bg-gradient-to-br from-[var(--bull)] to-[#0e7a4d] text-[#0a0e17] shadow-[0_0_12px_rgba(22,199,132,0.45)]">
+      <div className="flex size-8 shrink-0 items-center justify-center rounded-md bg-[var(--bull)] text-[#0a0e17] ">
         <Activity className="size-5" strokeWidth={2.5} />
       </div>
       {!collapsed && (
         <div className="flex flex-col leading-none">
-          <span className="text-sm font-bold tracking-wider text-foreground">
+          <span className="text-sm font-bold tracking-wide text-foreground">
             Z TERMINAL
           </span>
           <span className="text-[10px] font-medium tracking-wide text-muted-foreground">
@@ -142,7 +142,7 @@ function UserAccountSection({ collapsed }: { collapsed: boolean }) {
     if(provider==="metatrader"&&!window.confirm("Sign out? The background bot may continue running. Stop it from the Bot page first if needed."))return;
     logout();
     toast.success("Signed out", {
-      description: "You have been returned to the login screen.",
+      description: "You have been returned to the public market terminal.",
     });
   };
 
@@ -174,7 +174,7 @@ function UserAccountSection({ collapsed }: { collapsed: boolean }) {
           </span>
           <span
             className={cn(
-              "shrink-0 rounded px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider",
+              "shrink-0 rounded px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide",
               isDeriv
                 ? "bg-[rgba(22,199,132,0.15)] text-[var(--bull)]"
                 : "bg-[rgba(99,102,241,0.18)] text-indigo-300",
@@ -237,7 +237,7 @@ function SidebarFooter({ collapsed }: { collapsed: boolean }) {
       </span>
       {!collapsed && (
         <div className="flex flex-1 items-center justify-between">
-          <span className="font-semibold tracking-wider text-muted-foreground">
+          <span className="font-semibold tracking-wide text-muted-foreground">
             TERMINAL
           </span>
           <span className="font-mono tabular-nums text-muted-foreground">
@@ -296,7 +296,7 @@ export function Sidebar({ active, onSelect }: SidebarProps) {
             </div>
           </SheetContent>
         </Sheet>
-        <span className="ml-2 text-sm font-bold tracking-wider text-foreground">
+        <span className="ml-2 text-sm font-bold tracking-wide text-foreground">
           Z TERMINAL
         </span>
       </div>
