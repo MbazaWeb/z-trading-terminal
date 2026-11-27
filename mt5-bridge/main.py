@@ -109,7 +109,6 @@ def account_snapshot(login: int, server: str, authorization: str = Header(defaul
 
 # Demo execution is opt-in and restricted to a dedicated account.
 from risk import check_portfolio
-from risk import check_portfolio
 from reconciliation import record, reconcile
 import sqlite3
 import math

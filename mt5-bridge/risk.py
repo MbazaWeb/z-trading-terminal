@@ -2,6 +2,8 @@ import math
 from datetime import datetime, timezone
 
 def check_portfolio(mt5, account, symbol, estimated_loss):
+    if not all(math.isfinite(v) for v in (estimated_loss,account.equity,account.balance,account.profit)) or estimated_loss<=0 or account.equity<=0 or account.balance<=0:
+        return "Invalid portfolio risk inputs"
     positions = mt5.positions_get()
     orders = mt5.orders_get()
     now = datetime.now(timezone.utc)
@@ -13,6 +15,8 @@ def check_portfolio(mt5, account, symbol, estimated_loss):
     if any(p.symbol == symbol for p in positions):
         return "Existing position on symbol"
     net = sum(d.profit+d.commission+d.swap+d.fee for d in deals if d.type in (mt5.DEAL_TYPE_BUY,mt5.DEAL_TYPE_SELL))
+    if not math.isfinite(net):
+        return "Invalid broker profit history"
     if net + min(0,account.profit) <= -min(10,account.balance*0.02):
         return "Daily loss limit reached"
     exposure = estimated_loss
