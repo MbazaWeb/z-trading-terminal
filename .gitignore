@@ -62,5 +62,4 @@ server.log
 /examples/
 /mini-services/
 /db/
-/bun.lock
 /Caddyfile

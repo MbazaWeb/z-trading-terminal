@@ -1,32 +1,146 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
-// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+// Z Trading Terminal — Prisma Schema (PostgreSQL via Supabase)
+// Run `npx prisma db push` to sync this schema with your Supabase database.
+// DATABASE_URL must be set in .env (Supabase connection string).
 
 generator client {
   provider = "prisma-client-js"
 }
 
 datasource db {
-  provider = "sqlite"
+  provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
-model User {
-  id        String   @id @default(cuid())
-  email     String   @unique
-  name      String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+model AppUser {
+  id              String   @id @default(cuid())
+  supabaseAuthId String?  @unique @map("supabase_auth_id")
+  email           String   @unique
+  displayName     String?  @map("display_name")
+  provider        String   @default("deriv")
+  accountType     String   @default("demo") @map("account_type")
+  loginid         String?
+  balance         Decimal  @default(0) @db.Decimal(18, 2)
+  currency        String   @default("USD")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  trades       Trade[]
+  botPositions BotPosition[]
+  botLogs      BotLog[]
+  botConfig    BotConfig?
+
+  @@map("app_users")
 }
 
-model Post {
+model Trade {
+  id         String   @id @default(cuid())
+  status     String   @default("closed")
+  datetime   DateTime @default(now())
+  market     String
+  side       String
+  amount     Decimal  @db.Decimal(18, 2)
+  entryPrice Decimal  @map("entry_price") @db.Decimal(18, 8)
+  exitPrice  Decimal? @map("exit_price") @db.Decimal(18, 8)
+  pnl        Decimal  @default(0) @db.Decimal(18, 2)
+  pnlPct     Decimal  @default(0) @map("pnl_pct") @db.Decimal(8, 2)
+  result     String?
+  agentId    String?  @map("agent_id")
+  source     String   @default("manual")
+  userId     String?  @map("user_id")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  user AppUser? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([datetime(sort: Desc)])
+  @@index([status])
+  @@index([market])
+  @@index([agentId])
+  @@map("trades")
+}
+
+model Agent {
+  id               String   @id
+  name             String
+  strategy         String
+  strategyType     String   @map("strategy_type")
+  status           String   @default("active")
+  winRate          Decimal  @default(50) @map("win_rate") @db.Decimal(5, 2)
+  totalTrades      Int      @default(0) @map("total_trades")
+  pnl              Decimal  @default(0) @db.Decimal(18, 2)
+  selfImprovements Int      @default(0) @map("self_improvements")
+  confidence       Int      @default(50)
+  isLearning       Boolean  @default(false) @map("is_learning")
+  userId           String?  @map("user_id")
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  improvements AgentImprovement[]
+
+  @@map("agents")
+}
+
+model AgentImprovement {
+  id               String   @id @default(cuid())
+  agentId          String   @map("agent_id")
+  timestamp        DateTime @default(now())
+  trigger          String
+  parameterChange  String   @map("parameter_change")
+  confidenceDelta  Int      @default(0) @map("confidence_delta")
+  newConfidence    Int      @map("new_confidence")
+
+  agent Agent @relation(fields: [agentId], references: [id], onDelete: Cascade)
+
+  @@index([agentId])
+  @@index([timestamp(sort: Desc)])
+  @@map("agent_improvements")
+}
+
+model BotPosition {
+  id           String   @id @default(cuid())
+  tradeId      String   @map("trade_id")
+  symbol       String
+  side         String
+  size         Decimal  @db.Decimal(18, 8)
+  entryPrice   Decimal  @map("entry_price") @db.Decimal(18, 8)
+  currentPrice Decimal  @map("current_price") @db.Decimal(18, 8)
+  stopLoss     Decimal  @map("stop_loss") @db.Decimal(18, 8)
+  takeProfit   Decimal  @map("take_profit") @db.Decimal(18, 8)
+  openedAt     DateTime @default(now()) @map("opened_at")
+  agentId      String?  @map("agent_id")
+  userId       String?  @map("user_id")
+
+  user AppUser? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@map("bot_positions")
+}
+
+model BotLog {
   id        String   @id @default(cuid())
-  title     String
-  content   String?
-  published Boolean  @default(false)
-  authorId  String
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  timestamp DateTime @default(now())
+  tag       String
+  message   String
+  userId    String?  @map("user_id")
+
+  user AppUser? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([timestamp(sort: Desc)])
+  @@map("bot_logs")
+}
+
+model BotConfig {
+  id                     String   @id @default(cuid())
+  userId                 String   @unique @map("user_id")
+  running                Boolean  @default(false)
+  maxPositionSize        Decimal  @default(500) @map("max_position_size") @db.Decimal(18, 2)
+  maxDailyLoss           Decimal  @default(200) @map("max_daily_loss") @db.Decimal(18, 2)
+  maxConcurrentPositions Int      @default(5) @map("max_concurrent_positions")
+  defaultStopLoss        Decimal  @default(1.5) @map("default_stop_loss") @db.Decimal(5, 2)
+  defaultTakeProfit      Decimal  @default(3.0) @map("default_take_profit") @db.Decimal(5, 2)
+  riskPerTrade           Decimal  @default(2.0) @map("risk_per_trade") @db.Decimal(5, 2)
+  updatedAt              DateTime @updatedAt @map("updated_at")
+
+  user AppUser @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("bot_config")
 }
