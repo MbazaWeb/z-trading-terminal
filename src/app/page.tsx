@@ -48,7 +48,7 @@ export default function Page() {
   // During SSR we render only the ticker so the auth gate (which depends on
   // client-only localStorage) never leaks a one-frame flash of the app.
   return (
-    <div className="flex min-h-screen flex-col bg-background">
+    <div className="flex min-h-dvh w-full min-w-0 flex-col bg-background">
       <TickerTape symbols={market.symbols} activeSymbolId={market.activeSymbol.id} livePrice={market.livePrice} activeChangePercent={market.stats.changePercent} onSelectSymbol={market.selectSymbol}/>
 
 
@@ -63,9 +63,9 @@ export default function Page() {
       ) : (
         <div className="flex min-w-0 flex-1 flex-col md:flex-row">
           <Sidebar active={isAuthenticated ? view : "trading"} onSelect={id=>{if(!isAuthenticated && id!=="trading"){setShowLogin(true);return;}setView(id);}} />
-          <main className="min-w-0 flex-1">{isAuthenticated ? <TerminalStatus provider={provider} marketStatus={market.status} onBot={()=>setView("bot")}/> : <header className="flex items-center justify-between gap-3 border-b p-4"><div><h1 className="text-lg font-semibold">Market overview</h1><p className="text-xs text-muted-foreground">Guest access · Read-only</p></div><button className="rounded bg-emerald-600 px-4 py-2 font-semibold text-white" onClick={()=>setShowLogin(true)}>Sign in</button></header>}
+          <main className="min-w-0 flex-1">{isAuthenticated ? <TerminalStatus provider={provider} marketStatus={market.status} onBot={()=>setView("bot")}/> : <header className="flex items-center justify-between gap-2 border-b p-3"><div><h1 className="text-lg font-semibold">Market overview</h1><p className="text-xs text-muted-foreground">Guest access · Read-only</p></div><button className="shrink-0 rounded bg-emerald-600 px-4 py-3 font-semibold text-white" onClick={()=>setShowLogin(true)}>Sign in</button></header>}
             {/* Keyed wrapper so each view switch replays the fade transition. */}
-            <div key={view} className="animate-view-enter">
+            <div key={view} className="animate-view-enter min-w-0 max-w-full">
               {(!isAuthenticated || view === "trading") && <TradingView market={market} canTrade={isAuthenticated && provider==="metatrader" && accountType==="demo"} onSignIn={()=>setShowLogin(true)} />}
               {isAuthenticated && view === "dashboard" && (provider === "metatrader" ? <Mt5Dashboard /> : <div className="p-6">Deriv dashboard pending.</div>)}
               {isAuthenticated && view === "strategies" && (provider === "metatrader" ? <StrategyDashboard symbols={market.symbols} /> : <div className="p-6">MT5 demo connection required.</div>)}

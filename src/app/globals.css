@@ -349,3 +349,14 @@
     text-align: center;
   }
 }
+
+/* Narrow-screen terminal ergonomics */
+@media (max-width: 767px) {
+  input:not([type="checkbox"]):not([type="radio"]), select, textarea { font-size: 16px; max-width: 100%; }
+  main, section, fieldset { min-width: 0; }
+  .overflow-x-auto { max-width: 100%; overscroll-behavior-x: contain; }
+  .overflow-x-auto table { white-space: nowrap; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .animate-ticker, .animate-view-enter, .animate-fade-in-up, .animate-live { animation: none; }
+}

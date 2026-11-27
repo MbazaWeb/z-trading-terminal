@@ -265,14 +265,14 @@ export function CandlestickChart({
       : null;
 
   return (
-    <section className="flex h-full flex-col rounded-xl border border-[var(--panel-border)] bg-[#0d1117] animate-fade-in-up">
+    <section className="flex h-full min-w-0 flex-col rounded-md border border-[var(--panel-border)] bg-[#0d1117] animate-fade-in-up">
       {/* Chart toolbar */}
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--panel-border)] px-3 py-2">
-        <div className="flex items-center gap-1.5">
+        <div className="flex min-w-0 max-w-full flex-wrap items-center gap-1.5">
           <span className="mr-1 hidden text-[11px] font-medium uppercase tracking-wider text-muted-foreground sm:inline">
             Time
           </span>
-          <div className="flex items-center rounded-md border border-[var(--panel-border)] bg-[#0a0e17] p-0.5">
+          <div className="flex max-w-full flex-wrap items-center rounded-md border border-[var(--panel-border)] bg-[#0a0e17] p-0.5">
             {TIMEFRAMES.map((tf) => (
               <button
                 key={tf}
@@ -352,7 +352,7 @@ export function CandlestickChart({
       {/* Chart canvas - flexes to fill available height */}
       <div
         ref={ref}
-        className="relative w-full min-h-[360px] flex-1 select-none overflow-hidden"
+        className="relative w-full min-h-[280px] sm:min-h-[360px] flex-1 select-none overflow-hidden"
       >
         {/* OHLC tooltip (top-left floating box) */}
         {hoveredCandle && (

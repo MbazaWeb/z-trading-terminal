@@ -69,9 +69,9 @@ export function Header({
       : now.toUTCString().split(" ").slice(0, 4).join(" ");
 
   return (
-    <header className="sticky top-0 z-20 flex h-14 items-center justify-between gap-3 border-b border-[var(--panel-border)] bg-[#0a0e17]/95 px-3 backdrop-blur sm:px-4">
+    <header className="sticky top-0 z-20 flex min-h-14 min-w-0 items-center justify-between gap-1 sm:gap-3 border-b border-[var(--panel-border)] bg-[#0a0e17]/95 px-3 backdrop-blur sm:px-4">
       {/* Left: Logo */}
-      <div className="flex items-center gap-2.5">
+      <div className="hidden shrink-0 items-center gap-2.5 sm:flex">
         <div className="flex size-8 items-center justify-center rounded-md bg-[var(--bull)] text-[#0a0e17] ">
           <Zap className="size-5" strokeWidth={2.5} />
         </div>
@@ -89,19 +89,19 @@ export function Header({
       </div>
 
       {/* Center: Symbol selector */}
-      <div className="flex flex-1 items-center justify-center">
+      <div className="flex min-w-0 flex-1 items-center justify-center">
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button
               variant="outline"
-              className="h-9 min-w-[180px] gap-2 border-[var(--panel-border)] bg-[#0d1117] px-3 hover:bg-[#11161f] hover:text-foreground sm:min-w-[240px]"
+              className="h-11 w-full min-w-0 gap-2 border-[var(--panel-border)] bg-[#0d1117] px-3 hover:bg-[#11161f] hover:text-foreground sm:max-w-[320px]"
             >
               <Search className="size-3.5 text-muted-foreground" />
-              <span className="flex items-center gap-2">
-                <span className="font-mono text-sm font-semibold">
+              <span className="flex min-w-0 items-center gap-2">
+                <span className="truncate font-mono text-sm font-semibold">
                   {activeSymbol.label}
                 </span>
-                <span className="hidden text-xs text-muted-foreground sm:inline">
+                <span className="hidden truncate text-xs text-muted-foreground xl:inline">
                   / {activeSymbol.name}
                 </span>
               </span>
@@ -110,7 +110,7 @@ export function Header({
           </DropdownMenuTrigger>
           <DropdownMenuContent
             align="center"
-            className="w-[280px] border-[var(--panel-border)] bg-[#0d1117] p-1"
+            className="w-[280px] max-w-[calc(100vw-24px)] border-[var(--panel-border)] bg-[#0d1117] p-1"
           >
             <DropdownMenuLabel className="px-2 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
               Select Market
@@ -153,7 +153,7 @@ export function Header({
       </div>
 
       {/* Right: clock, status, settings */}
-      <div className="flex items-center gap-2 sm:gap-3">
+      <div className="flex shrink-0 items-center gap-1 sm:gap-3">
         <div className="hidden flex-col items-end leading-none md:flex">
           <span className="font-mono text-sm font-semibold text-foreground tabular-nums">
             {utcString}
@@ -166,13 +166,13 @@ export function Header({
             <span className="relative inline-flex size-2 rounded-full bg-[var(--bull)]" />
           </span>
           <span className="text-[11px] font-semibold tracking-wide text-[var(--bull)]">
-            LIVE
+            FEED
           </span>
         </div>
         <Button
           variant="ghost"
           size="icon"
-          className="size-9 text-muted-foreground hover:bg-[#11161f] hover:text-foreground"
+          className="size-11 text-muted-foreground hover:bg-[#11161f] hover:text-foreground"
           aria-label="Settings"
         >
           <Settings className="size-5" />

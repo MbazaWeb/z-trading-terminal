@@ -50,7 +50,7 @@ function Sparkline({
       width={w}
       height={h}
       viewBox={`0 0 ${w} ${h}`}
-      className="overflow-visible"
+      className="hidden shrink-0 overflow-visible xl:block"
       aria-hidden="true"
     >
       <defs>
@@ -133,7 +133,7 @@ export function StatsStrip({
         <div className="flex items-center justify-between gap-2">
           <span
             className={cn(
-              "font-mono text-xl font-bold tabular-nums transition-colors sm:text-2xl",
+              "min-w-0 break-all font-mono text-base font-semibold tabular-nums transition-colors sm:text-2xl",
               directionColor,
               direction === "up" && "text-glow-bull",
               direction === "down" && "text-glow-bear",

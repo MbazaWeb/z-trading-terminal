@@ -50,11 +50,11 @@ export function BottomPanel({
   return (
     <section className="flex flex-col rounded-md border border-[var(--panel-border)] bg-[#0d1117] animate-fade-in-up">
       <Tabs defaultValue="pairs" className="flex h-full flex-col gap-0">
-        <div className="flex items-center justify-between border-b border-[var(--panel-border)] px-2 py-1.5">
-          <TabsList className="h-8 bg-[#0a0e17] p-0.5">
+        <div className="flex flex-wrap items-center justify-between gap-1 border-b border-[var(--panel-border)] px-2 py-1.5">
+          <TabsList className="h-auto max-w-full flex-wrap bg-[#0a0e17] p-0.5">
             <TabsTrigger
               value="trades"
-              className="h-7 rounded px-3 text-xs font-semibold data-[state=active]:bg-[#1c2230] data-[state=active]:text-foreground data-[state=active]:shadow-none"
+              className="min-h-10 rounded px-2 sm:px-3 text-xs font-semibold data-[state=active]:bg-[#1c2230] data-[state=active]:text-foreground data-[state=active]:shadow-none"
             >
               Trades
             </TabsTrigger>

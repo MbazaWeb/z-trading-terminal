@@ -261,13 +261,13 @@ export function Sidebar({ active, onSelect }: SidebarProps) {
   return (
     <>
       {/* Mobile hamburger bar */}
-      <div className="flex h-12 items-center border-b border-[var(--panel-border)] bg-[#0a0e17] px-3 md:hidden">
+      <div className="flex h-12 shrink-0 items-center border-b border-[var(--panel-border)] bg-[#0a0e17] px-3 md:hidden">
         <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
           <SheetTrigger asChild>
             <Button
               variant="ghost"
               size="icon"
-              className="size-9 text-foreground"
+              className="size-11 text-foreground"
               aria-label="Open navigation"
             >
               <Menu className="size-5" />
@@ -275,7 +275,7 @@ export function Sidebar({ active, onSelect }: SidebarProps) {
           </SheetTrigger>
           <SheetContent
             side="left"
-            className="w-[240px] border-r border-[var(--panel-border)] bg-[#0a0e17] p-0"
+            className="w-[240px] max-w-[85vw] border-r border-[var(--panel-border)] bg-[#0a0e17] p-0"
           >
             <SheetTitle className="sr-only">Navigation</SheetTitle>
             <div className="flex h-full flex-col">
