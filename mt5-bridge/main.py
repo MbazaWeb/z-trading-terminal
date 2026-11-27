@@ -338,6 +338,7 @@ def start_reconciliation():
         threading.Thread(target=reconciliation_loop,daemon=True,name="mt5-reconciliation").start()
 
 from market_scanner import scan as scan_markets
+from agents import assess
 
 class ScanRequest(BaseModel):
     login: int = Field(gt=0)
@@ -367,7 +368,8 @@ def scan_endpoint(body: ScanRequest, authorization: str = Header(default="")):
             instruments=mt5.symbols_get()
             if instruments is None or not set(body.symbols).issubset({s.name for s in instruments if s.visible}):
                 raise HTTPException(400,"Select Market Watch symbols")
-            return {"source":"MT5","signals":scan_markets(mt5,list(dict.fromkeys(body.symbols)),body.strategy,os.environ.get("MT5_ORDER_DB","mt5-orders.sqlite3"),{k:getattr(body,k) for k in ("fast","slow","period","atr_multiplier","reward_risk")})}
+            signals=scan_markets(mt5,list(dict.fromkeys(body.symbols)),body.strategy,os.environ.get("MT5_ORDER_DB","mt5-orders.sqlite3"),{k:getattr(body,k) for k in ("fast","slow","period","atr_multiplier","reward_risk")})
+            return {"source":"MT5","signals":signals,"agents":assess(mt5,a,signals)}
         finally:
             mt5.shutdown()
 
