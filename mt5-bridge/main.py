@@ -415,6 +415,9 @@ import json
 
 @app.post("/agent-execute")
 def agent_execute(body: ScanRequest, authorization: str = Header(default="")):
+    return execute_candidates(body,authorization,lambda: True)
+
+def execute_candidates(body,authorization,allowed):
     key=os.environ.get("MT5_BRIDGE_KEY","")
     if len(key)<32 or not secrets.compare_digest(authorization,"Bearer "+key):
         raise HTTPException(401,"Unauthorized")
@@ -424,6 +427,7 @@ def agent_execute(body: ScanRequest, authorization: str = Header(default="")):
     db_path=os.environ.get("MT5_ORDER_DB","mt5-orders.sqlite3")
     outcomes=[]
     for candidate in report["agents"]:
+        if not allowed(): break
         s=candidate["signal"]
         if candidate["decision"]!="CANDIDATE":
             outcomes.append({"symbol":s["symbol"],"status":"hold","stages":candidate["stages"]})
@@ -454,6 +458,8 @@ def agent_execute(body: ScanRequest, authorization: str = Header(default="")):
                     tp=round(round(s["tp"]/tick)*tick,info.digits)
                 finally:
                     mt5.shutdown()
+            if not allowed():
+                raise HTTPException(409,"Bot paused or stopped before submission")
             result=order(OrderRequest(login=body.login,server=body.server,request_id=rid,symbol=s["symbol"],side=s["side"].lower(),volume=volume,sl=sl,tp=tp),authorization)
         except HTTPException as e:
             result={"status":"blocked","reason":str(e.detail)}
@@ -515,12 +521,12 @@ from bot_scheduler import Bot
 bot=None
 
 def bot_cycle(config):
-    return agent_execute(config,"Bearer "+os.environ.get("MT5_BRIDGE_KEY",""))
+    return execute_candidates(config,"Bearer "+os.environ.get("MT5_BRIDGE_KEY",""),bot.allowed)
 
 @app.on_event("startup")
 def start_bot_scheduler():
     global bot
-    bot=Bot(bot_cycle)
+    bot=Bot(bot_cycle,os.environ.get("MT5_ORDER_DB","mt5-orders.sqlite3"),json.dumps([os.environ.get("MT5_EXECUTION_LOGIN"),os.environ.get("MT5_EXECUTION_SERVER")]))
 
 class BotControl(ScanRequest):
     action: Literal["start","pause","stop"]
