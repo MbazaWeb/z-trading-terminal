@@ -1,12 +1,12 @@
 "use client";
 
 import { useCallback, useState } from "react";
-import { Mt5OrderPanel } from "@/components/trading/Mt5OrderPanel";
-import { StatsStrip } from "@/components/trading/StatsStrip";
-import { OrderBook } from "@/components/trading/OrderBook";
-import { BottomPanel } from "@/components/trading/BottomPanel";
 import { Header } from "@/components/trading/Header";
+import { StatsStrip } from "@/components/trading/StatsStrip";
 import { CandlestickChart } from "@/components/trading/CandlestickChart";
+import { OrderBook } from "@/components/trading/OrderBook";
+import { Mt5OrderPanel } from "@/components/trading/Mt5OrderPanel";
+import { BottomPanel } from "@/components/trading/BottomPanel";
 import type { MarketState } from "@/components/trading/useMarketData";
 import type { ChartType, IndicatorState } from "@/components/trading/types";
 
@@ -40,9 +40,13 @@ export function TradingView({ market, canTrade, onSignIn }: { market: MarketStat
       />
 
       <main className="mx-auto w-full max-w-[1600px] flex-1 px-2 py-2 sm:px-3 sm:py-3">
-        {market.status!=="ready"&&<p role="alert" className="rounded border border-amber-500/40 p-3 text-sm text-amber-500">Market feed is stale or unavailable. New orders are disabled.</p>}
-        <StatsStrip stats={market.stats} candles={market.candles} symbol={market.activeSymbol} direction={market.lastPriceDirection} quote={market.quote}/>
-        <div className="p-3 text-sm">MT5 • {market.status} {market.quote && <> | Bid: {market.quote.bid} | Ask: {market.quote.ask} | Spread: {market.quote.ask-market.quote.bid} | Quote: {new Date(market.quote.time).toISOString()}</>}</div>
+        <StatsStrip
+          stats={market.stats}
+          candles={market.candles}
+          symbol={market.activeSymbol}
+          direction={market.lastPriceDirection}
+          quote={market.quote}
+        />
 
         <div className="mt-2 grid grid-cols-1 gap-2 sm:mt-3 sm:gap-3 lg:grid-cols-[minmax(0,1fr)_340px] xl:grid-cols-[minmax(0,1fr)_360px]">
           <div className="min-h-[420px]">
@@ -55,17 +59,28 @@ export function TradingView({ market, canTrade, onSignIn }: { market: MarketStat
               onTimeframeChange={market.setTimeframe}
               onChartTypeChange={setChartType}
               onToggleIndicator={toggleIndicator}
-            /> : <section className="flex h-full min-h-[420px] flex-col rounded-xl border border-[var(--panel-border)] bg-[#0d1117]"><div className="flex gap-2 border-b p-3">{(["1m","5m","15m","1H","4H","1D","1W"] as const).map(tf=><button key={tf} className="rounded px-2 py-1 text-xs" onClick={()=>market.setTimeframe(tf)}>{tf}</button>)}</div><div className="m-auto text-sm text-muted-foreground">Market data unavailable</div></section>}
+            /> : <div className="flex min-h-[420px] flex-col rounded-xl border border-[var(--panel-border)] bg-[#0d1117] p-3"><div className="flex flex-wrap gap-2">{(["1m","5m","15m","1H","4H","1D","1W"] as const).map(tf=><button key={tf} onClick={()=>market.setTimeframe(tf)} className={`rounded px-2 py-1 text-xs ${market.timeframe===tf?"bg-[var(--bull)] text-black":"text-muted-foreground"}`}>{tf}</button>)}</div><div className="mt-3 flex gap-2">{(["candles","line","area"] as const).map(c=><button key={c} onClick={()=>setChartType(c)} className="rounded border px-2 py-1 text-xs capitalize">{c}</button>)}</div><div className="m-auto text-sm text-muted-foreground">Market data unavailable</div></div>}
           </div>
 
           <div className="flex flex-col gap-2 sm:gap-3">
-            <OrderBook orderBook={market.orderBook} symbol={market.activeSymbol} lastPrice={market.quote?market.livePrice:NaN}/>
-            {canTrade ? <Mt5OrderPanel key={market.activeSymbol.id} symbol={market.activeSymbol.id} ready={market.status==="ready"} /> : <div className="rounded-lg border p-5"><h2 className="font-semibold">Trading locked</h2><p className="my-3 text-sm text-muted-foreground">Sign in with a verified demo account to place orders.</p><button className="rounded bg-emerald-600 px-4 py-2 text-white" onClick={onSignIn}>Sign in</button></div>}
+            <OrderBook
+              orderBook={market.orderBook}
+              symbol={market.activeSymbol}
+              lastPrice={market.livePrice}
+            />
+            {canTrade ? <Mt5OrderPanel key={market.activeSymbol.id} symbol={market.activeSymbol.id} ready={market.status==="ready"}/> : <section className="rounded-xl border border-[var(--panel-border)] bg-[#0d1117] p-3"><h2 className="mb-3 text-xs font-bold uppercase tracking-wider">Trade</h2><div className="grid grid-cols-2 gap-2"><button onClick={onSignIn} className="rounded-lg bg-[var(--bull)] py-3 font-bold text-[#0a0e17]">BUY</button><button onClick={onSignIn} className="rounded-lg bg-[var(--bear)] py-3 font-bold text-white">SELL</button></div><p className="mt-3 text-center text-xs text-muted-foreground">Sign in to trade on a verified demo account.</p></section>}
           </div>
         </div>
 
-        <div className="mt-2 sm:mt-3"><BottomPanel trades={market.trades} symbols={market.symbols} activeSymbolId={market.activeSymbol.id} livePrice={market.livePrice} onSelectSymbol={market.selectSymbol}/></div>
-        <div className="p-3 text-xs">Chart volume is broker tick count, not traded quantity.</div>
+        <div className="mt-2 sm:mt-3">
+          <BottomPanel
+            trades={market.trades}
+            symbols={market.symbols}
+            activeSymbolId={market.activeSymbol.id}
+            livePrice={market.livePrice}
+            onSelectSymbol={market.selectSymbol}
+          />
+        </div>
       </main>
 
       <footer className="mt-auto border-t border-[var(--panel-border)] bg-[#070a11] px-4 py-3">
@@ -74,7 +89,7 @@ export function TradingView({ market, canTrade, onSignIn }: { market: MarketStat
             Z TERMINAL
           </span>
           <span>
-            MT5 broker feed. Demo execution requires explicit server configuration.
+            MT5 broker feed · Demo execution only.
           </span>
           <span className="font-mono tabular-nums">v1.0.0</span>
         </div>
