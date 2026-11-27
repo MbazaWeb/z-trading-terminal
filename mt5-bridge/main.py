@@ -108,6 +108,7 @@ def account_snapshot(login: int, server: str, authorization: str = Header(defaul
             mt5.shutdown()
 
 # Demo execution is opt-in and restricted to a dedicated account.
+from risk import check_portfolio
 import sqlite3
 import math
 import time
@@ -156,6 +157,9 @@ def order(body: OrderRequest, authorization: str = Header(default="")):
             loss=mt5.order_calc_profit(typ,body.symbol,body.volume,price,body.sl)
             if margin is None or loss is None or a.equity<=0 or margin>a.margin_free or loss>=0 or -loss>a.equity*0.01:
                 raise HTTPException(400,"Margin or 1% estimated risk limit exceeded")
+            reason = check_portfolio(mt5, a, -loss)
+            if reason:
+                raise HTTPException(403, reason)
             # FOK only: do not silently switch execution policy.
             if not (s.filling_mode & 1):
                 raise HTTPException(400,"FOK filling not supported")
@@ -166,6 +170,8 @@ def order(body: OrderRequest, authorization: str = Header(default="")):
             # Persist before sending; uncertain outcomes are never retried automatically.
             with sqlite3.connect(os.environ.get("MT5_ORDER_DB","mt5-orders.sqlite3")) as db:
                 db.execute("CREATE TABLE IF NOT EXISTS requests (id TEXT PRIMARY KEY, status TEXT NOT NULL)")
+                if db.execute("SELECT 1 FROM requests WHERE status IN ('pending','uncertain') LIMIT 1").fetchone():
+                    raise HTTPException(409,"Unresolved order exists; reconcile broker history before further entries")
                 try:
                     db.execute("INSERT INTO requests VALUES (?,?)",(str(body.request_id),"pending"))
                     db.commit()
@@ -176,5 +182,55 @@ def order(body: OrderRequest, authorization: str = Header(default="")):
                 db.execute("UPDATE requests SET status=? WHERE id=?",(status,str(body.request_id)))
                 db.commit()
                 return {"status":status,"requestId":str(body.request_id),"retcode":result.retcode if result else None,"deal":str(result.deal) if result else None,"order":str(result.order) if result else None}
+        finally:
+            mt5.shutdown()
+
+class CloseRequest(BaseModel):
+    login: int
+    server: str
+    ticket: int = Field(gt=0)
+    request_id: UUID
+
+@app.post("/close")
+def close_position(body: CloseRequest, authorization: str = Header(default="")):
+    key = os.environ.get("MT5_BRIDGE_KEY","")
+    if len(key)<32 or not secrets.compare_digest(authorization,"Bearer "+key):
+        raise HTTPException(401,"Unauthorized")
+    if os.environ.get("MT5_DEMO_EXECUTION")!="true" or str(body.login)!=os.environ.get("MT5_EXECUTION_LOGIN") or body.server!=os.environ.get("MT5_EXECUTION_SERVER"):
+        raise HTTPException(403,"Demo execution disabled")
+    with lock:
+        try:
+            if not mt5.initialize(timeout=15000):
+                raise HTTPException(503,"Terminal unavailable")
+            a,t=mt5.account_info(),mt5.terminal_info()
+            if not a or not t or not t.connected or not t.trade_allowed or not a.trade_allowed or not a.trade_expert or a.login!=body.login or a.server!=body.server or a.trade_mode!=mt5.ACCOUNT_TRADE_MODE_DEMO:
+                raise HTTPException(403,"Demo account not ready")
+            positions=mt5.positions_get(ticket=body.ticket)
+            if positions is None or len(positions)!=1:
+                raise HTTPException(404,"Position unavailable")
+            p=positions[0]
+            s,q=mt5.symbol_info(p.symbol),mt5.symbol_info_tick(p.symbol)
+            if not s or not q or not (0<=time.time()-q.time<=30) or q.bid<=0 or q.ask<q.bid or not (s.filling_mode & 1):
+                raise HTTPException(400,"Fresh quote or FOK unavailable")
+            buy=p.type==mt5.POSITION_TYPE_SELL
+            req={"action":mt5.TRADE_ACTION_DEAL,"position":p.ticket,"symbol":p.symbol,"volume":p.volume,"type":mt5.ORDER_TYPE_BUY if buy else mt5.ORDER_TYPE_SELL,"price":q.ask if buy else q.bid,"deviation":10,"magic":260427,"comment":"ZT close "+body.request_id.hex[:16],"type_filling":mt5.ORDER_FILLING_FOK,"type_time":mt5.ORDER_TIME_GTC}
+            check=mt5.order_check(req)
+            if check is None or check.retcode!=0:
+                raise HTTPException(400,"Close preflight rejected")
+            with sqlite3.connect(os.environ.get("MT5_ORDER_DB","mt5-orders.sqlite3")) as db:
+                db.execute("CREATE TABLE IF NOT EXISTS requests (id TEXT PRIMARY KEY, status TEXT NOT NULL)")
+                db.execute("CREATE TABLE IF NOT EXISTS close_requests (ticket TEXT PRIMARY KEY, id TEXT NOT NULL)")
+                try:
+                    db.execute("INSERT INTO requests VALUES (?,?)",(str(body.request_id),"pending"))
+                    db.execute("INSERT INTO close_requests VALUES (?,?)",(str(p.ticket),str(body.request_id)))
+                    db.commit()
+                except sqlite3.IntegrityError:
+                    raise HTTPException(409,"Close already requested; reconcile broker history")
+                result=mt5.order_send(req)
+                remaining=mt5.positions_get(ticket=p.ticket)
+                status="confirmed" if result is not None and result.retcode==mt5.TRADE_RETCODE_DONE and result.deal and remaining is not None and len(remaining)==0 else "uncertain"
+                db.execute("UPDATE requests SET status=? WHERE id=?",(status,str(body.request_id)))
+                db.commit()
+                return {"status":status,"deal":str(result.deal) if result else None}
         finally:
             mt5.shutdown()
