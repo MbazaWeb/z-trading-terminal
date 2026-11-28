@@ -35,6 +35,12 @@ export async function analyzeBrokerMarket(db: PrismaClient, session: SessionData
   if(!latest.running||latest.emergencyStop||latest.revision!==current.revision)return {action:"HOLD" as const,reason:"AI controls changed",executable:false as const};
   if(process.env.AI_NATIVE_ADVISORY_ENABLED!=="true") return {action:"HOLD" as const,reason:"AI advisory release disabled",consensus,plan,checked,executable:false as const};
   const evidence=JSON.stringify({symbol,action:consensus.action,strategies:consensus.candidates.map(c=>({strategy:c.strategy,action:c.action})),entry:checked.entry,stopLoss:plan.stopLoss,takeProfit:plan.takeProfit,atr:plan.atr,spread:market.spread,estimatedLoss:checked.estimatedStopLoss,costs,riskBudget:plan.riskBudget});
+  const candleTime=BigInt(market.candles[market.candles.length-1].time);
+  const claimed=await db.$executeRaw`INSERT INTO private.ai_signal_claims
+    (user_id,provider,account_id,symbol,candle_time)
+    VALUES (${session.userId}::uuid,'metatrader',${session.loginid},${market.symbol},${candleTime})
+    ON CONFLICT DO NOTHING`;
+  if(claimed!==1)return {action:"HOLD" as const,reason:"Candle already claimed for AI analysis",executable:false as const};
   const advice=await analyzeEvidence(db,evidence);
   const after=await getAIControls(db,session.userId);
   if(!after.running||after.emergencyStop||after.revision!==latest.revision||Date.now()-checked.observedAt>10000||advice.decision.action!==consensus.action) return {action:"HOLD" as const,reason:"Advisory disagreement, expired quote or changed controls",reservationId:advice.reservationId,executable:false as const};
