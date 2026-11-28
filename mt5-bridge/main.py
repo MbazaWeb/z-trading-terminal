@@ -382,3 +382,20 @@ def account_risk():
                 "openPositions": len(positions), "pendingOrders": len(orders),
                 "dayStart": start.isoformat(), "observedAt": int(now.timestamp()*1000),
                 "executable": False}
+
+
+from reconciliation import match_deals
+from datetime import datetime, timezone, timedelta
+
+@app.get("/recovery-candidate", dependencies=[Depends(authenticate)])
+def recovery_candidate(requestId: UUID, symbol: str, side: str):
+    if side not in ("buy", "sell"):
+        raise HTTPException(422, "Invalid side")
+    # Diagnostic only: never changes the ledger or authorizes submission.
+    with broker() as account:
+        now = datetime.now(timezone.utc)
+        deals = mt5.history_deals_get(now - timedelta(days=7), now)
+        result = match_deals(str(requestId), deals, expected_symbol=symbol,
+                             expected_type=mt5.DEAL_TYPE_BUY if side == "buy" else mt5.DEAL_TYPE_SELL)
+        return {**result, "login": str(account.login), "server": account.server,
+                "accountType": "demo", "historyWindowDays": 7, "executable": False}
