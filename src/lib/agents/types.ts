@@ -46,6 +46,15 @@ export interface ConsensusVote {
   weight: number;
 }
 
+export interface ConsensusExecutionParams {
+  /** Recommended stop-loss price (absolute, not a distance). */
+  stopLoss?: number;
+  /** Recommended take-profit price (absolute, not a distance). */
+  takeProfit?: number;
+  /** Market risk score 0-100 (higher = riskier), from the Risk agent. */
+  riskScore?: number;
+}
+
 export interface ConsensusResult {
   decision: AgentAction; // final decision (buy / sell / hold)
   totalConfidence: number; // 0-100 weighted
@@ -54,6 +63,13 @@ export interface ConsensusResult {
   threshold: number; // minimum confidence to act (default 70)
   passed: boolean; // totalConfidence >= threshold AND decision != hold
   reason: string;
+  /**
+   * Execution parameters derived from specialist agents (Stop Loss
+   * Sentinel, Take Profit Hunter, Risk Guardian). These agents do not
+   * vote on direction; instead they supply the recommended SL / TP / risk
+   * score for the trade the consensus is about to place.
+   */
+  executionParams?: ConsensusExecutionParams;
 }
 
 export interface ImprovementLogEntry {

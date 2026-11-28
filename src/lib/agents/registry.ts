@@ -17,6 +17,17 @@ import { analyze as analyzeReverter } from "./reverter";
 import { analyze as analyzeSentiment } from "./sentiment";
 import { analyze as analyzeBreakout } from "./breakout";
 import { analyze as analyzeArbitrage } from "./arbitrage";
+import { analyze as analyzeSignal } from "./signalAgent";
+import { analyze as analyzePip } from "./pipAgent";
+import { analyze as analyzeRisk } from "./riskAgent";
+import { analyze as analyzeStopLoss } from "./stopLossAgent";
+import { analyze as analyzeStopWin } from "./stopWinAgent";
+import { analyze as analyzeStrategy } from "./strategyAgent";
+import { analyze as analyzeChart } from "./chartAnalysis";
+import { analyze as analyzeMultiIndicator } from "./multiIndicator";
+import { analyze as analyzeAlert } from "./alertAgent";
+import { analyze as analyzeTime } from "./timeAgent";
+import { analyze as analyzeMedia } from "./mediaAgent";
 import type { AgentAnalyzer, AgentSignal } from "./types";
 
 export interface AgentRegistryEntry {
@@ -29,7 +40,15 @@ export interface AgentRegistryEntry {
   analyzer: AgentAnalyzer;
 }
 
+// Specialist agent ids — these never vote on direction. They supply
+// execution parameters (SL / TP / risk score) through their indicators.
+export const SPECIALIST_AGENT_IDS: ReadonlySet<string> = new Set([
+  "stopLoss",
+  "stopWin",
+]);
+
 export const AGENT_REGISTRY: AgentRegistryEntry[] = [
+  // ---- Directional agents (11) --------------------------------------------
   {
     id: "momentum",
     name: "Momentum Hunter",
@@ -74,6 +93,106 @@ export const AGENT_REGISTRY: AgentRegistryEntry[] = [
     strategyVersion: "arbitrage-v1.0",
     baseConfidence: 86,
     analyzer: analyzeArbitrage,
+  },
+  {
+    id: "signal",
+    name: "Signal Master",
+    strategy: "Signal Aggregation",
+    strategyType: "Signal",
+    strategyVersion: "signal-v1.0",
+    baseConfidence: 75,
+    analyzer: analyzeSignal,
+  },
+  {
+    id: "strategy",
+    name: "Strategy Oracle",
+    strategy: "Strategy Selection",
+    strategyType: "Strategy",
+    strategyVersion: "strategy-v1.0",
+    baseConfidence: 73,
+    analyzer: analyzeStrategy,
+  },
+  {
+    id: "chart",
+    name: "Pattern Detective",
+    strategy: "Chart Pattern Recognition",
+    strategyType: "Chart",
+    strategyVersion: "chart-v1.0",
+    baseConfidence: 70,
+    analyzer: analyzeChart,
+  },
+  {
+    id: "multiIndicator",
+    name: "Indicator Fusion",
+    strategy: "Multi-Indicator Composite",
+    strategyType: "Composite",
+    strategyVersion: "multiindicator-v1.0",
+    baseConfidence: 76,
+    analyzer: analyzeMultiIndicator,
+  },
+  {
+    id: "time",
+    name: "Time Keeper",
+    strategy: "Time-Based Analysis",
+    strategyType: "Time",
+    strategyVersion: "time-v1.0",
+    baseConfidence: 65,
+    analyzer: analyzeTime,
+  },
+  {
+    id: "media",
+    name: "News Pulse",
+    strategy: "News Sentiment Proxy",
+    strategyType: "Media",
+    strategyVersion: "media-v1.0",
+    baseConfidence: 69,
+    analyzer: analyzeMedia,
+  },
+  // ---- Specialist agents (5) ---------------------------------------------
+  {
+    id: "risk",
+    name: "Risk Guardian",
+    strategy: "Risk Assessment",
+    strategyType: "Risk",
+    strategyVersion: "risk-v1.0",
+    baseConfidence: 78,
+    analyzer: analyzeRisk,
+  },
+  {
+    id: "stopLoss",
+    name: "Stop Loss Sentinel",
+    strategy: "Stop Loss Calculation",
+    strategyType: "StopLoss",
+    strategyVersion: "stoploss-v1.0",
+    baseConfidence: 80,
+    analyzer: analyzeStopLoss,
+  },
+  {
+    id: "stopWin",
+    name: "Take Profit Hunter",
+    strategy: "Take Profit Calculation",
+    strategyType: "TakeProfit",
+    strategyVersion: "stopwin-v1.0",
+    baseConfidence: 80,
+    analyzer: analyzeStopWin,
+  },
+  {
+    id: "pip",
+    name: "PIP Tracker",
+    strategy: "PIP Analysis",
+    strategyType: "PIP",
+    strategyVersion: "pip-v1.0",
+    baseConfidence: 71,
+    analyzer: analyzePip,
+  },
+  {
+    id: "alert",
+    name: "Alert Sentinel",
+    strategy: "Alert Monitoring",
+    strategyType: "Alert",
+    strategyVersion: "alert-v1.0",
+    baseConfidence: 67,
+    analyzer: analyzeAlert,
   },
 ];
 
@@ -143,4 +262,28 @@ export function runAgentAnalysis(
   if (!entry) return null;
   const stub = makeAgentStub(entry, confidenceOverride);
   return entry.analyzer(stub, candles, ticker);
+}
+
+/**
+ * Run EVERY registered agent's analyzer over the supplied market data and
+ * return the resulting signals. Used by the cron bot worker (which can't
+ * use the Zustand store) so the cron sees the same set of agents the UI
+ * sees. Each agent's analyzer is wrapped in a try/catch so one failing
+ * agent doesn't break the cycle.
+ */
+export function runAllAgentsAnalysis(
+  candles: Candle[],
+  ticker: TickerStats,
+): AgentSignal[] {
+  const signals: AgentSignal[] = [];
+  for (const entry of AGENT_REGISTRY) {
+    try {
+      const stub = makeAgentStub(entry);
+      signals.push(entry.analyzer(stub, candles, ticker));
+    } catch {
+      // Skip a failing agent — the cron should still be able to reach
+      // consensus with the remaining agents.
+    }
+  }
+  return signals;
 }

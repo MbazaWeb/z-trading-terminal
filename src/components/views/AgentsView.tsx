@@ -3,16 +3,27 @@
 import { memo, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import {
+  Bell,
+  Brain,
   BrainCircuit,
+  Clock,
   Crosshair,
   FlaskConical,
+  Layers,
   Loader2,
   MessageSquare,
+  Newspaper,
   Plus,
   Radar,
+  Radio,
   RefreshCw,
+  Ruler,
+  ScanSearch,
+  Shield,
+  ShieldAlert,
   Shuffle,
   Sparkles,
+  Target,
   X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -48,8 +59,24 @@ import {
 import { formatProfitFactor } from "@/lib/agents/performance";
 import type { AgentPerformance } from "@/lib/agents/types";
 import { useTrades } from "@/lib/tradeStore";
-import type { AgentCore } from "@/lib/agents/types";
+import type { AgentCore, AgentSignal } from "@/lib/agents/types";
 import type { LucideIcon } from "lucide-react";
+
+// Specialist agent ids — these never vote on direction; they supply SL / TP /
+// risk / pip / alert metrics instead. The AgentsView groups them separately
+// and surfaces their aggregated recommendations in the Specialist
+// Recommendations panel.
+const SPECIALIST_AGENT_IDS = new Set<string>([
+  "stopLoss",
+  "stopWin",
+  "risk",
+  "pip",
+  "alert",
+]);
+
+function isSpecialist(agent: AgentCore): boolean {
+  return SPECIALIST_AGENT_IDS.has(agent.id);
+}
 
 // ---- Strategy version badge ---------------------------------------------
 
@@ -491,7 +518,7 @@ function AgentCard({
         <div className="mt-3 rounded-lg border border-[var(--panel-border)] bg-[#0a0e17] p-2.5">
           <div className="flex items-center justify-between gap-2">
             <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-              Current Signal
+              {isSpecialist(agent) ? "Specialist Read" : "Current Signal"}
             </span>
             <span
               className="rounded px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider"
@@ -507,11 +534,12 @@ function AgentCard({
             {lastSignal.reasoning}
           </p>
           {lastSignal.indicators.length > 0 && (
-            <div className="mt-1.5 flex flex-wrap gap-1">
-              {lastSignal.indicators.slice(0, 4).map((ind) => (
+            <div className="mt-1.5 flex max-h-24 flex-wrap gap-1 overflow-y-auto pr-1">
+              {lastSignal.indicators.map((ind) => (
                 <span
                   key={ind.name}
                   className="rounded bg-white/5 px-1.5 py-0.5 font-mono text-[9px] tabular-nums text-muted-foreground"
+                  title={`${ind.name}: ${ind.value}`}
                 >
                   {ind.name}: {ind.value}
                 </span>
@@ -1224,6 +1252,17 @@ const STRATEGY_ICON_MAP: Record<string, LucideIcon> = {
   Sentiment: BrainCircuit,
   Breakout: Crosshair,
   Arbitrage: Shuffle,
+  Signal: Radio,
+  Strategy: Brain,
+  Chart: ScanSearch,
+  Composite: Layers,
+  Time: Clock,
+  Media: Newspaper,
+  Risk: Shield,
+  StopLoss: ShieldAlert,
+  TakeProfit: Target,
+  PIP: Ruler,
+  Alert: Bell,
 };
 
 interface StrategyRow {
@@ -1251,12 +1290,179 @@ function RiskBadge({ risk }: { risk: StrategyRow["risk"] }) {
   );
 }
 
+// ---- Specialist Recommendations panel ------------------------------------
+
+function SpecialistRecommendationsPanel({
+  signals,
+  consensus,
+}: {
+  signals: AgentSignal[];
+  consensus: ReturnType<typeof useLastConsensus>;
+}) {
+  // Pull the SL / TP / risk score from the consensus execution params
+  // (already pre-selected for the consensus direction).
+  const sl = consensus?.executionParams?.stopLoss;
+  const tp = consensus?.executionParams?.takeProfit;
+  const riskScore = consensus?.executionParams?.riskScore;
+  const decision = consensus?.decision ?? "hold";
+
+  // Pull the latest signal from each specialist agent so we can show the
+  // raw recommendation alongside the aggregated values.
+  const stopLossSig = signals.find((s) => s.agentId === "stopLoss");
+  const stopWinSig = signals.find((s) => s.agentId === "stopWin");
+  const pipSig = signals.find((s) => s.agentId === "pip");
+  const alertSig = signals.find((s) => s.agentId === "alert");
+
+  const findInd = (sig: AgentSignal | undefined, name: string) =>
+    sig?.indicators.find((i) => i.name === name)?.value;
+
+  const slPct = findInd(stopLossSig, "SLPct");
+  const tpPct = findInd(stopWinSig, "TPPct");
+  const riskReward = findInd(stopWinSig, "RiskReward");
+  const sessionPips = findInd(pipSig, "SessionPips");
+  const atrPips = findInd(pipSig, "ATRPips");
+  const buyAlerts = findInd(alertSig, "BuyAlerts");
+  const sellAlerts = findInd(alertSig, "SellAlerts");
+  const totalAlerts = findInd(alertSig, "TotalAlerts");
+
+  const riskLevel =
+    riskScore === undefined
+      ? "--"
+      : riskScore > 60
+        ? "High"
+        : riskScore > 30
+          ? "Medium"
+          : "Low";
+
+  return (
+    <div className="rounded-xl border border-[var(--panel-border)] bg-[#0d1117] p-4 animate-fade-in-up">
+      <div className="mb-3 flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <ShieldAlert className="size-4 text-[#ef4444]" />
+          <h2 className="text-xs font-semibold uppercase tracking-wider text-foreground">
+            Specialist Recommendations
+          </h2>
+        </div>
+        <span className="text-[10px] text-muted-foreground">
+          {decision !== "hold" ? `For ${decision.toUpperCase()} entry` : "Awaiting directional consensus"}
+        </span>
+      </div>
+      <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
+        <SpecialistMetric
+          label="Recommended Stop Loss"
+          value={sl !== undefined ? `$${sl.toFixed(2)}` : "--"}
+          sub={slPct !== undefined ? `${slPct.toFixed(2)}% risk` : undefined}
+          tone="bear"
+          icon={ShieldAlert}
+        />
+        <SpecialistMetric
+          label="Recommended Take Profit"
+          value={tp !== undefined ? `$${tp.toFixed(2)}` : "--"}
+          sub={tpPct !== undefined ? `${tpPct.toFixed(2)}% target` : undefined}
+          tone="bull"
+          icon={Target}
+        />
+        <SpecialistMetric
+          label="Market Risk Score"
+          value={riskScore !== undefined ? `${riskScore}/100` : "--"}
+          sub={riskLevel}
+          tone={riskLevel === "High" ? "bear" : riskLevel === "Medium" ? "warn" : "bull"}
+          icon={Shield}
+        />
+        <SpecialistMetric
+          label="Risk : Reward"
+          value={riskReward !== undefined ? `1 : ${riskReward.toFixed(2)}` : "--"}
+          sub={riskReward !== undefined ? (riskReward >= 1.5 ? "favorable" : "tight") : undefined}
+          tone="neutral"
+          icon={Target}
+        />
+        <SpecialistMetric
+          label="Session Pips"
+          value={sessionPips !== undefined ? `${sessionPips.toFixed(0)}` : "--"}
+          sub={sessionPips !== undefined ? (sessionPips > 0 ? "up" : "down") : undefined}
+          tone={sessionPips === undefined ? "neutral" : sessionPips >= 0 ? "bull" : "bear"}
+          icon={Ruler}
+        />
+        <SpecialistMetric
+          label="ATR Pips"
+          value={atrPips !== undefined ? atrPips.toFixed(1) : "--"}
+          sub={atrPips !== undefined ? "per candle" : undefined}
+          tone="neutral"
+          icon={Ruler}
+        />
+        <SpecialistMetric
+          label="Buy / Sell Alerts"
+          value={buyAlerts !== undefined && sellAlerts !== undefined ? `${buyAlerts} / ${sellAlerts}` : "--"}
+          sub={totalAlerts !== undefined ? `${totalAlerts} active` : undefined}
+          tone={buyAlerts === undefined || sellAlerts === undefined ? "neutral" : buyAlerts > sellAlerts ? "bull" : "bear"}
+          icon={Bell}
+        />
+        <SpecialistMetric
+          label="Consensus Direction"
+          value={decision.toUpperCase()}
+          sub={consensus ? `${consensus.totalConfidence}% / ${consensus.threshold}%` : undefined}
+          tone={decision === "buy" ? "bull" : decision === "sell" ? "bear" : "neutral"}
+          icon={Radio}
+        />
+      </div>
+    </div>
+  );
+}
+
+function SpecialistMetric({
+  label,
+  value,
+  sub,
+  tone = "neutral",
+  icon: Icon,
+}: {
+  label: string;
+  value: string;
+  sub?: string;
+  tone?: "bull" | "bear" | "warn" | "neutral";
+  icon?: LucideIcon;
+}) {
+  const valueColor =
+    tone === "bull"
+      ? "text-[var(--bull)]"
+      : tone === "bear"
+        ? "text-[var(--bear)]"
+        : tone === "warn"
+          ? "text-[#f0b90b]"
+          : "text-foreground";
+  return (
+    <div className="rounded-lg border border-[var(--panel-border)] bg-[#0a0e17] p-2.5">
+      <div className="flex items-center gap-1 text-[9px] uppercase tracking-wider text-muted-foreground">
+        {Icon && <Icon className="size-3" />}
+        {label}
+      </div>
+      <div className={cn("mt-0.5 font-mono text-base font-bold tabular-nums", valueColor)}>
+        {value}
+      </div>
+      {sub && (
+        <div className="mt-0.5 text-[10px] text-muted-foreground">{sub}</div>
+      )}
+    </div>
+  );
+}
+
 export const AgentsView = memo(function AgentsView() {
   const agents = useAgents();
   const trades = useTrades();
+  const signals = useAgentSignals();
+  const consensus = useLastConsensus();
   const [selected, setSelected] = useState<string | null>(null);
   const [deployOpen, setDeployOpen] = useState(false);
   const [backtestAgent, setBacktestAgent] = useState<AgentCore | null>(null);
+
+  const directionalAgents = useMemo(
+    () => agents.filter((a) => !SPECIALIST_AGENT_IDS.has(a.id)),
+    [agents],
+  );
+  const specialistAgents = useMemo(
+    () => agents.filter((a) => SPECIALIST_AGENT_IDS.has(a.id)),
+    [agents],
+  );
 
   // Build the strategies table from live agents (mirrors the historical
   // strategy list with real numbers).
@@ -1275,9 +1481,15 @@ export const AgentsView = memo(function AgentsView() {
       const winRate =
         agentTrades.length > 0 ? (wins / agentTrades.length) * 100 : 0;
       const risk: StrategyRow["risk"] =
-        a.strategyType === "Arbitrage" || a.strategyType === "Reversion"
+        a.strategyType === "Arbitrage" ||
+        a.strategyType === "Reversion" ||
+        a.strategyType === "StopLoss" ||
+        a.strategyType === "TakeProfit"
           ? "Low"
-          : a.strategyType === "Sentiment"
+          : a.strategyType === "Sentiment" ||
+              a.strategyType === "Breakout" ||
+              a.strategyType === "Chart" ||
+              a.strategyType === "Media"
             ? "High"
             : "Med";
       return {
@@ -1315,16 +1527,53 @@ export const AgentsView = memo(function AgentsView() {
       {/* Consensus + signals + discussion */}
       <ConsensusPanel />
 
-      {/* Agent roster */}
-      <div className="mt-6 grid grid-cols-1 gap-3 lg:grid-cols-2">
-        {agents.map((a) => (
-          <AgentCard
-            key={a.id}
-            agent={a}
-            onView={setSelected}
-            onBacktest={setBacktestAgent}
-          />
-        ))}
+      {/* Specialist recommendations (SL / TP / risk / pip / alert) */}
+      <div className="mt-6">
+        <SpecialistRecommendationsPanel signals={signals} consensus={consensus} />
+      </div>
+
+      {/* Directional agent roster */}
+      <div className="mt-6">
+        <div className="mb-2 flex items-center justify-between">
+          <h2 className="text-sm font-semibold uppercase tracking-wider text-foreground">
+            Directional Agents
+          </h2>
+          <span className="text-[10px] text-muted-foreground">
+            {directionalAgents.length} agents voting on buy / sell
+          </span>
+        </div>
+        <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+          {directionalAgents.map((a) => (
+            <AgentCard
+              key={a.id}
+              agent={a}
+              onView={setSelected}
+              onBacktest={setBacktestAgent}
+            />
+          ))}
+        </div>
+      </div>
+
+      {/* Specialist agent roster */}
+      <div className="mt-6">
+        <div className="mb-2 flex items-center justify-between">
+          <h2 className="text-sm font-semibold uppercase tracking-wider text-foreground">
+            Specialist Agents
+          </h2>
+          <span className="text-[10px] text-muted-foreground">
+            {specialistAgents.length} agents supplying SL / TP / risk / pip / alerts
+          </span>
+        </div>
+        <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+          {specialistAgents.map((a) => (
+            <AgentCard
+              key={a.id}
+              agent={a}
+              onView={setSelected}
+              onBacktest={setBacktestAgent}
+            />
+          ))}
+        </div>
       </div>
 
       {/* Strategies table */}

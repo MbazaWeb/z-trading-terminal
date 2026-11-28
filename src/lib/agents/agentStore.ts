@@ -19,11 +19,22 @@
 
 import { create } from "zustand";
 import {
+  Bell,
+  Brain,
   BrainCircuit,
+  Clock,
   Crosshair,
+  Layers,
+  Newspaper,
+  Radio,
   Radar,
   RefreshCw,
+  Ruler,
+  ScanSearch,
+  Shield,
+  ShieldAlert,
   Shuffle,
+  Target,
 } from "lucide-react";
 import type { Candle, TickerStats } from "@/components/trading/types";
 import { evaluateConsensus } from "./consensus";
@@ -32,6 +43,17 @@ import { analyze as analyzeReverter } from "./reverter";
 import { analyze as analyzeSentiment } from "./sentiment";
 import { analyze as analyzeBreakout } from "./breakout";
 import { analyze as analyzeArbitrage } from "./arbitrage";
+import { analyze as analyzeSignal } from "./signalAgent";
+import { analyze as analyzePip } from "./pipAgent";
+import { analyze as analyzeRisk } from "./riskAgent";
+import { analyze as analyzeStopLoss } from "./stopLossAgent";
+import { analyze as analyzeStopWin } from "./stopWinAgent";
+import { analyze as analyzeStrategy } from "./strategyAgent";
+import { analyze as analyzeChart } from "./chartAnalysis";
+import { analyze as analyzeMultiIndicator } from "./multiIndicator";
+import { analyze as analyzeAlert } from "./alertAgent";
+import { analyze as analyzeTime } from "./timeAgent";
+import { analyze as analyzeMedia } from "./mediaAgent";
 import type {
   AgentCore,
   AgentMessage,
@@ -56,6 +78,7 @@ interface AgentDef {
 }
 
 const AGENT_DEFS: AgentDef[] = [
+  // ---- Directional agents (11) --------------------------------------------
   {
     id: "momentum",
     name: "Momentum Hunter",
@@ -111,6 +134,128 @@ const AGENT_DEFS: AgentDef[] = [
     baseConfidence: 86,
     analyzer: analyzeArbitrage,
   },
+  {
+    id: "signal",
+    name: "Signal Master",
+    strategy: "Signal Aggregation",
+    strategyType: "Signal",
+    strategyVersion: "signal-v1.0",
+    icon: Radio,
+    iconColor: "#16c784",
+    baseConfidence: 75,
+    analyzer: analyzeSignal,
+  },
+  {
+    id: "strategy",
+    name: "Strategy Oracle",
+    strategy: "Strategy Selection",
+    strategyType: "Strategy",
+    strategyVersion: "strategy-v1.0",
+    icon: Brain,
+    iconColor: "#a855f7",
+    baseConfidence: 73,
+    analyzer: analyzeStrategy,
+  },
+  {
+    id: "chart",
+    name: "Pattern Detective",
+    strategy: "Chart Pattern Recognition",
+    strategyType: "Chart",
+    strategyVersion: "chart-v1.0",
+    icon: ScanSearch,
+    iconColor: "#4f9cf9",
+    baseConfidence: 70,
+    analyzer: analyzeChart,
+  },
+  {
+    id: "multiIndicator",
+    name: "Indicator Fusion",
+    strategy: "Multi-Indicator Composite",
+    strategyType: "Composite",
+    strategyVersion: "multiindicator-v1.0",
+    icon: Layers,
+    iconColor: "#06b6d4",
+    baseConfidence: 76,
+    analyzer: analyzeMultiIndicator,
+  },
+  {
+    id: "time",
+    name: "Time Keeper",
+    strategy: "Time-Based Analysis",
+    strategyType: "Time",
+    strategyVersion: "time-v1.0",
+    icon: Clock,
+    iconColor: "#8b5cf6",
+    baseConfidence: 65,
+    analyzer: analyzeTime,
+  },
+  {
+    id: "media",
+    name: "News Pulse",
+    strategy: "News Sentiment Proxy",
+    strategyType: "Media",
+    strategyVersion: "media-v1.0",
+    icon: Newspaper,
+    iconColor: "#ec4899",
+    baseConfidence: 69,
+    analyzer: analyzeMedia,
+  },
+  // ---- Specialist agents (5) ---------------------------------------------
+  {
+    id: "risk",
+    name: "Risk Guardian",
+    strategy: "Risk Assessment",
+    strategyType: "Risk",
+    strategyVersion: "risk-v1.0",
+    icon: Shield,
+    iconColor: "#ea3943",
+    baseConfidence: 78,
+    analyzer: analyzeRisk,
+  },
+  {
+    id: "stopLoss",
+    name: "Stop Loss Sentinel",
+    strategy: "Stop Loss Calculation",
+    strategyType: "StopLoss",
+    strategyVersion: "stoploss-v1.0",
+    icon: ShieldAlert,
+    iconColor: "#ef4444",
+    baseConfidence: 80,
+    analyzer: analyzeStopLoss,
+  },
+  {
+    id: "stopWin",
+    name: "Take Profit Hunter",
+    strategy: "Take Profit Calculation",
+    strategyType: "TakeProfit",
+    strategyVersion: "stopwin-v1.0",
+    icon: Target,
+    iconColor: "#16c784",
+    baseConfidence: 80,
+    analyzer: analyzeStopWin,
+  },
+  {
+    id: "pip",
+    name: "PIP Tracker",
+    strategy: "PIP Analysis",
+    strategyType: "PIP",
+    strategyVersion: "pip-v1.0",
+    icon: Ruler,
+    iconColor: "#f0b90b",
+    baseConfidence: 71,
+    analyzer: analyzePip,
+  },
+  {
+    id: "alert",
+    name: "Alert Sentinel",
+    strategy: "Alert Monitoring",
+    strategyType: "Alert",
+    strategyVersion: "alert-v1.0",
+    icon: Bell,
+    iconColor: "#f59e0b",
+    baseConfidence: 67,
+    analyzer: analyzeAlert,
+  },
 ];
 
 // Map of agent id -> analyzer function. Kept out of the AgentCore so the
@@ -121,6 +266,17 @@ const ANALYZERS: Record<string, AgentDef["analyzer"]> = {
   sentiment: analyzeSentiment,
   breakout: analyzeBreakout,
   arbitrage: analyzeArbitrage,
+  signal: analyzeSignal,
+  strategy: analyzeStrategy,
+  chart: analyzeChart,
+  multiIndicator: analyzeMultiIndicator,
+  time: analyzeTime,
+  media: analyzeMedia,
+  risk: analyzeRisk,
+  stopLoss: analyzeStopLoss,
+  stopWin: analyzeStopWin,
+  pip: analyzePip,
+  alert: analyzeAlert,
 };
 
 const EMPTY_PERFORMANCE: AgentPerformance = {
@@ -167,6 +323,17 @@ const initialAgents = buildInitialAgents();
 
 // ---- Self-improvement templates --------------------------------------------
 
+const DEFAULT_LOSS_TRIGGERS = [
+  "Indicator inputs diverged from price action",
+  "Confidence threshold too aggressive for current regime",
+  "Volatility expanded beyond modeled ATR band",
+];
+const DEFAULT_LOSS_CHANGES = [
+  "Widened confirmation threshold by 0.05%",
+  "Added ATR-expansion filter to suppress noisy signals",
+  "Extended lookback window by 2 candles",
+];
+
 const LOSS_TRIGGERS: Record<string, string[]> = {
   momentum: [
     "Consecutive losses on trending market",
@@ -192,6 +359,61 @@ const LOSS_TRIGGERS: Record<string, string[]> = {
     "Deviation extended further than 1.5 ATR",
     "ATR period too short — false dislocation",
     "Mean reversion failed in strong trend",
+  ],
+  signal: [
+    "Composite score false-positive on conflicting signals",
+    "SMA99 filter too laggy for fast regime",
+    "Volume spike confirmation gated out valid moves",
+  ],
+  strategy: [
+    "ADX proxy misclassified a choppy trend",
+    "SMA7/SMA25 spread too thin for regime detection",
+    "Trending regime call flipped prematurely",
+  ],
+  chart: [
+    "Double-top/bottom tolerance too loose (2%)",
+    "Head & shoulders detected on noise",
+    "Engulfing pattern failed to follow through",
+  ],
+  multiIndicator: [
+    "Composite weights skewed toward lagging MACD",
+    "Bollinger %B score saturated near band extremes",
+    "ATR score over-dampened a strong signal",
+  ],
+  time: [
+    "US session bias inverted by news shock",
+    "Session open reference too stale",
+    "Asian session hold skipped a valid breakout",
+  ],
+  media: [
+    "Large-body news event was a reversal candle",
+    "Volume spike triggered without follow-through",
+    "Consecutive-count too low (3) for confirmation",
+  ],
+  risk: [
+    "Risk score under-priced volatility expansion",
+    "VaR multiplier too low for tail events",
+    "Max adverse excursion window too short",
+  ],
+  stopLoss: [
+    "ATR stop too tight — whipsawed out",
+    "Structural low stale after recent breakout",
+    "Multiplier 1.5x ATR under-priced noise",
+  ],
+  stopWin: [
+    "ATR target too far — price reversed before TP",
+    "Structural resistance already tested",
+    "R:R ratio skewed too aggressive (1:2)",
+  ],
+  pip: [
+    "Pip threshold 150 too sensitive for low-vol session",
+    "Session open reference shifted on gap",
+    "Spread estimate too narrow",
+  ],
+  alert: [
+    "Alert threshold (delta +2) too tight",
+    "Bollinger squeeze fired without breakout follow-through",
+    "ATR spike alert misclassified normal volatility",
   ],
 };
 
@@ -220,6 +442,61 @@ const LOSS_CHANGES: Record<string, string[]> = {
     "Tightened ATR multiple 1.5 -> 1.8",
     "Extended ATR period 14 -> 18",
     "Added SMA50 slope filter",
+  ],
+  signal: [
+    "Raised composite threshold 4 -> 5 votes",
+    "Tightened volume-spike gate to 1.8x",
+    "Dropped lagging SMA99 weight in score",
+  ],
+  strategy: [
+    "Raised ADX proxy threshold 25 -> 28",
+    "Extended SMA lookback 7/25 -> 9/30",
+    "Added ATR regime filter",
+  ],
+  chart: [
+    "Tightened pattern tolerance 2% -> 1.5%",
+    "Required 4-candle separation between peaks",
+    "Added volume confirmation on engulfing",
+  ],
+  multiIndicator: [
+    "Capped MACD score contribution",
+    "Dampened Bollinger %B near extremes",
+    "Re-weighted composite toward RSI",
+  ],
+  time: [
+    "Required price + RSI dual confirmation",
+    "Used rolling session-open instead of candle[0]",
+    "Suppressed Asian-session breakout calls",
+  ],
+  media: [
+    "Raised consecutive count 3 -> 4",
+    "Required dual volume + body confirmation",
+    "Added gap threshold 1.5x avg body",
+  ],
+  risk: [
+    "Raised VaR multiplier 1.65 -> 1.96",
+    "Extended max-adverse window 20 -> 30",
+    "Added volatility regime gate",
+  ],
+  stopLoss: [
+    "Widened ATR multiplier 1.5 -> 1.8",
+    "Used rolling 25-candle structural low",
+    "Confirmed structure with volume spike",
+  ],
+  stopWin: [
+    "Reduced ATR multiple 2 -> 1.75",
+    "Used next-level resistance beyond prior 20",
+    "Capped R:R at 1:1.5 in low-vol regimes",
+  ],
+  pip: [
+    "Raised pip threshold 150 -> 200",
+    "Used rolling session open (last 24h)",
+    "Widened spread estimate to 0.10x ATR",
+  ],
+  alert: [
+    "Raised alert delta 2 -> 3",
+    "Suppressed squeeze alert without breakout",
+    "Required 2x ATR for spike alert",
   ],
 };
 

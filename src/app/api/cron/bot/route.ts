@@ -1,11 +1,7 @@
 import { NextResponse } from "next/server";
 import { fetchCandles, fetchTicker, SYMBOLS } from "@/lib/binance";
-import { analyze as analyzeMomentum } from "@/lib/agents/momentum";
-import { analyze as analyzeReverter } from "@/lib/agents/reverter";
-import { analyze as analyzeSentiment } from "@/lib/agents/sentiment";
-import { analyze as analyzeBreakout } from "@/lib/agents/breakout";
-import { analyze as analyzeArbitrage } from "@/lib/agents/arbitrage";
 import { evaluateConsensus } from "@/lib/agents/consensus";
+import { runAllAgentsAnalysis } from "@/lib/agents/registry";
 import type { AgentSignal } from "@/lib/agents/types";
 import { computePositionProfit, STRATEGY_CONFIG } from "@/lib/strategy";
 
@@ -24,8 +20,8 @@ import { computePositionProfit, STRATEGY_CONFIG } from "@/lib/strategy";
  *   2. Read bot config from env (or Supabase if configured)
  *   3. If bot is not running, return early
  *   4. Fetch Binance candles for the active symbol
- *   5. Run all 5 agents
- *   6. Evaluate consensus
+ *   5. Run all 16 agents (directional + specialist)
+ *   6. Evaluate consensus (specialist agents supply SL/TP/risk via executionParams)
  *   7. If consensus passes + risk checks pass: place order (if broker configured)
  *   8. Check open positions for TP/SL crossings
  *   9. Close positions that hit TP/SL
@@ -102,64 +98,11 @@ export async function GET(request: Request) {
       return NextResponse.json(summary);
     }
 
-    // 5. Run all 5 agents
-    const agentDefs = [
-      { id: "momentum", name: "Momentum Hunter", analyzer: analyzeMomentum },
-      { id: "reverter", name: "Mean Reverter", analyzer: analyzeReverter },
-      { id: "sentiment", name: "Sentiment Scalper", analyzer: analyzeSentiment },
-      { id: "breakout", name: "Breakout Sniper", analyzer: analyzeBreakout },
-      { id: "arbitrage", name: "Arbitrage Detector", analyzer: analyzeArbitrage },
-    ];
-
-    const signals: AgentSignal[] = [];
-    for (const def of agentDefs) {
-      try {
-        const signal = def.analyzer(
-          {
-            id: def.id,
-            name: def.name,
-            strategy: "",
-            strategyType: "",
-            strategyVersion: "v1.0",
-            icon: null as any,
-            iconColor: "#16c784",
-            status: "active",
-            winRate: 60,
-            totalTrades: 0,
-            pnl: 0,
-            selfImprovements: 0,
-            confidence: 70,
-            isLearning: false,
-            learningUntil: null,
-            lastSignal: null,
-            lastImprovement: null,
-            improvementLog: [],
-            sparkline: [],
-            performance: {
-              totalTrades: 0,
-              wins: 0,
-              losses: 0,
-              winRate: 60,
-              totalPnl: 0,
-              grossProfit: 0,
-              grossLoss: 0,
-              profitFactor: 0,
-              maxDrawdown: 0,
-              avgHoldTimeMs: 0,
-              sharpeRatio: 0,
-              lastEvaluatedAt: Date.now(),
-            },
-          } as any,
-          candles,
-          ticker,
-        );
-        signals.push(signal);
-      } catch (err) {
-        summary.errors.push(
-          `Agent ${def.id} failed: ${err instanceof Error ? err.message : String(err)}`,
-        );
-      }
-    }
+    // 5. Run all 16 agents (directional + specialist). The specialist agents
+    //    (Stop Loss Sentinel, Take Profit Hunter) emit HOLD signals and
+    //    supply SL/TP/risk through their indicators, which the consensus
+    //    engine surfaces in `executionParams`.
+    const signals: AgentSignal[] = runAllAgentsAnalysis(candles, ticker);
 
     summary.agentsChecked = signals.length;
 
