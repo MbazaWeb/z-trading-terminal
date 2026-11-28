@@ -58,17 +58,21 @@ export function Header({
 }: HeaderProps) {
   const now = useWallClock();
 
-  const utcString =
+  const localTime =
     now == null
       ? "--:--:--"
-      : `${pad(now.getUTCHours())}:${pad(now.getUTCMinutes())}:${pad(
-          now.getUTCSeconds(),
-        )} UTC`;
+      : `${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(
+          now.getSeconds(),
+        )} LOCAL`;
 
-  const dateStr =
-    now == null
-      ? ""
-      : now.toUTCString().split(" ").slice(0, 4).join(" ");
+  const dateStr = now == null
+    ? ""
+    : now.toLocaleDateString("en-US", {
+        weekday: "short",
+        month: "short",
+        day: "2-digit",
+        year: "numeric",
+      });
 
   return (
     <header className="sticky top-0 z-20 flex min-h-14 min-w-0 items-center justify-between gap-1 sm:gap-3 border-b border-[var(--panel-border)] bg-[#0a0e17]/95 px-3 backdrop-blur sm:px-4">
@@ -158,7 +162,7 @@ export function Header({
       <div className="flex shrink-0 items-center gap-1 sm:gap-3">
         <div className="hidden flex-col items-end leading-none md:flex">
           <span className="font-mono text-sm font-semibold text-foreground tabular-nums">
-            {utcString}
+            {localTime}
           </span>
           <span className="text-[10px] text-muted-foreground">{dateStr}</span>
         </div>
