@@ -27,8 +27,9 @@ export interface BridgePosition {
 }
 
 export async function bridgeRequest<T>(
-  path: "/account" | "/positions" | "/health" | "/market" | "/risk-specs" | "/account-risk",
-  symbol?: string
+  path: "/account" | "/positions" | "/health" | "/market" | "/risk-specs" | "/account-risk" | "/order-check",
+  symbol?: string,
+  order?: {symbol:string;side:"buy"|"sell";volume:number;stopLoss:number;takeProfit:number}
 ): Promise<T> {
   const base = process.env.MT5_BRIDGE_URL?.trim();
   const key = process.env.MT5_BRIDGE_KEY?.trim();
@@ -53,10 +54,12 @@ export async function bridgeRequest<T>(
     target.searchParams.set("symbol", symbol);
   }
   const response = await fetch(target, {
-    method: "GET",
+    method: path === "/order-check" ? "POST" : "GET",
+    body: path === "/order-check" ? JSON.stringify(order) : undefined,
     headers: {
       "X-Bridge-Key": key,
-      "Accept": "application/json"
+      "Accept": "application/json",
+      "Content-Type": "application/json"
     },
     cache: "no-store",
     redirect: "error",
@@ -138,5 +141,15 @@ export async function getBridgeAccountRisk() {
  if(r.login!==process.env.MT5_LOGIN?.trim()||r.server!==process.env.MT5_SERVER?.trim()||
  Date.parse(r.dayStart)!==day.getTime()||r.observedAt>now||now-r.observedAt>10000)
  throw new Error("Invalid account risk snapshot");
+ return r;
+}
+
+export async function checkBridgeOrder(order: {symbol:string;side:"buy"|"sell";volume:number;stopLoss:number;takeProfit:number}) {
+ const {z}=await import("zod"); const p=z.number().finite().positive();
+ const r=z.object({symbol:z.literal(order.symbol),side:z.literal(order.side),volume:z.literal(order.volume),
+ entry:p,margin:p,estimatedStopLoss:p,currency:z.string().min(1),observedAt:z.number().int(),
+ accountType:z.literal("demo"),executable:z.literal(false),brokerCheckPassed:z.literal(true)
+ }).parse(await bridgeRequest<unknown>("/order-check",undefined,order));
+ const now=Date.now();if(r.observedAt>now||now-r.observedAt>10000)throw new Error("Expired broker check");
  return r;
 }
