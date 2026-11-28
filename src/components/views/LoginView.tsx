@@ -6,10 +6,7 @@ import {
   Activity,
   BarChart3,
   ChevronRight,
-  Eye,
-  EyeOff,
   Loader2,
-  Lock,
   ShieldCheck,
   TrendingUp,
   User,
@@ -29,8 +26,10 @@ import {
   type PendingAccountType,
   useAuthStore,
 } from "@/lib/authStore";
+import { createClient as createBrowserSupabaseClient } from "@/lib/supabase/browser";
 
 const MT5_SERVERS = [
+  "MetaQuotes-Demo",
   "Deriv-MT5",
   "ICMarkets-MT5",
   "Exness-MT5",
@@ -84,15 +83,78 @@ function LoginCard({ onBrowseAsGuest }: LoginCardProps) {
   const loginWithMetaTrader = useAuthStore((s) => s.loginWithMetaTrader);
   const syncFromServerSession = useAuthStore((s) => s.syncFromServerSession);
 
+  const [authMode, setAuthMode] = useState<"login" | "register" | "forgot" | "reset">(
+    typeof window !== "undefined" && new URLSearchParams(window.location.search).get("auth") === "recovery"
+      ? "reset"
+      : "login",
+  );
+  const [fullName, setFullName] = useState("");
+  const [email, setEmail] = useState("");
+  const [appPassword, setAppPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [appSubmitting, setAppSubmitting] = useState(false);
+
+  const handleApplicationAuth = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setAppSubmitting(true);
+    const supabase = createBrowserSupabaseClient();
+    try {
+      if (authMode === "reset") {
+        if (appPassword !== confirmPassword) throw new Error("Passwords do not match");
+        const { error } = await supabase.auth.updateUser({ password: appPassword });
+        if (error) throw error;
+        toast.success("Password updated");
+        setAuthMode("login");
+        window.history.replaceState({}, "", "/");
+        return;
+      }
+      if (authMode === "forgot") {
+        const { error } = await supabase.auth.resetPasswordForEmail(email, {
+          redirectTo: `${window.location.origin}/api/auth/callback?next=reset-password`,
+        });
+        if (error) throw error;
+        toast.success("Password reset email sent");
+        return;
+      }
+      if (authMode === "register") {
+        if (appPassword !== confirmPassword) throw new Error("Passwords do not match");
+        const { error } = await supabase.auth.signUp({
+          email,
+          password: appPassword,
+          options: {
+            data: { full_name: fullName },
+            emailRedirectTo: `${window.location.origin}/api/auth/callback`,
+          },
+        });
+        if (error) throw error;
+        toast.success("Check your email to verify your account");
+        return;
+      }
+      const { error } = await supabase.auth.signInWithPassword({ email, password: appPassword });
+      if (error) throw error;
+      await syncFromServerSession();
+      toast.success("Signed in");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Authentication failed");
+    } finally {
+      setAppSubmitting(false);
+    }
+  };
+
+  const handleGoogle = async () => {
+    const supabase = createBrowserSupabaseClient();
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: "google",
+      options: { redirectTo: `${window.location.origin}/api/auth/callback` },
+    });
+    if (error) toast.error(error.message);
+  };
+
   const [showMt5Form, setShowMt5Form] = useState(false);
   const [loginNumber, setLoginNumber] = useState("");
-  const [password, setPassword] = useState("");
   const [server, setServer] = useState<string>(MT5_SERVERS[0]);
-  const [showPassword, setShowPassword] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const [errors, setErrors] = useState<{ login?: string; password?: string }>(
-    {},
-  );
+  const [errors, setErrors] = useState<{ login?: string }>({});
 
   const handleDeriv = () => {
     setPendingAccountType(pendingAccountType ?? "real");
@@ -104,22 +166,17 @@ function LoginCard({ onBrowseAsGuest }: LoginCardProps) {
   };
 
   /**
-   * Submit MetaTrader credentials to the server-side /api/auth/mt5-login
-   * endpoint. The server creates an HttpOnly session cookie and returns the
-   * redacted loginid + account type — the password is NOT stored anywhere
-   * (it's only used for one-time MetaApi provisioning via /api/mt5/connect,
-   * which requires admin privileges).
+   * Connect the preconfigured local demo bridge after application
+   * authentication. Broker passwords are never collected in the browser.
    */
   const handleMt5Submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const next: { login?: string; password?: string } = {};
+    const next: { login?: string } = {};
     if (!loginNumber.trim()) next.login = "Account number is required";
-    if (!password) next.password = "Password is required";
     setErrors(next);
-    if (next.login || next.password) return;
+    if (next.login) return;
 
     setSubmitting(true);
-    const chosenType: PendingAccountType = pendingAccountType ?? "real";
     try {
       const res = await fetch("/api/auth/mt5-login", {
         method: "POST",
@@ -127,7 +184,7 @@ function LoginCard({ onBrowseAsGuest }: LoginCardProps) {
         body: JSON.stringify({
           login: loginNumber.trim(),
           server,
-          accountType: chosenType,
+          accountType: "demo",
         }),
       });
       if (!res.ok) {
@@ -180,9 +237,32 @@ function LoginCard({ onBrowseAsGuest }: LoginCardProps) {
           Sign in to your account
         </h2>
         <p className="mt-1 text-sm text-muted-foreground">
-          Connect your broker account to start trading
+          Authenticate with Z Trading Terminal, then connect a broker
         </p>
       </div>
+
+      <form onSubmit={handleApplicationAuth} className="mb-5 space-y-3">
+        {authMode === "register" && (
+          <Input value={fullName} onChange={(e) => setFullName(e.target.value)} placeholder="Full name" autoComplete="name" required />
+        )}
+        <Input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Email address" type="email" autoComplete="email" required={authMode !== "reset"} />
+        {authMode !== "forgot" && (
+          <Input value={appPassword} onChange={(e) => setAppPassword(e.target.value)} placeholder="Password" type="password" autoComplete={authMode === "login" ? "current-password" : "new-password"} required minLength={8} />
+        )}
+        {(authMode === "register" || authMode === "reset") && (
+          <Input value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} placeholder="Confirm password" type="password" autoComplete="new-password" required minLength={8} />
+        )}
+        <Button type="submit" disabled={appSubmitting} className="w-full">
+          {appSubmitting ? <Loader2 className="size-4 animate-spin" /> : authMode === "register" ? "Create account" : authMode === "forgot" ? "Send reset email" : authMode === "reset" ? "Update password" : "Sign in"}
+        </Button>
+        <Button type="button" variant="outline" onClick={handleGoogle} className="w-full">Continue with Google</Button>
+        <div className="flex justify-between text-[11px] text-muted-foreground">
+          <button type="button" onClick={() => setAuthMode(authMode === "register" ? "login" : "register")}>
+            {authMode === "register" ? "Have an account? Sign in" : "Create account"}
+          </button>
+          <button type="button" onClick={() => setAuthMode("forgot")}>Forgot password</button>
+        </div>
+      </form>
 
       {/* Account type pre-select */}
       <div className="mb-5">
@@ -296,46 +376,6 @@ function LoginCard({ onBrowseAsGuest }: LoginCardProps) {
               )}
             </div>
 
-            {/* Password */}
-            <div className="mb-3">
-              <Label
-                htmlFor="mt5-password"
-                className="mb-1.5 block text-[11px] font-medium uppercase tracking-wider text-muted-foreground"
-              >
-                Password
-              </Label>
-              <div className="relative">
-                <Lock className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-                <Input
-                  id="mt5-password"
-                  type={showPassword ? "text" : "password"}
-                  autoComplete="current-password"
-                  placeholder="••••••••"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  className="bg-[#0d1117] pl-9 pr-9"
-                  aria-invalid={!!errors.password}
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowPassword((v) => !v)}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-muted-foreground hover:text-foreground"
-                  aria-label={showPassword ? "Hide password" : "Show password"}
-                >
-                  {showPassword ? (
-                    <EyeOff className="size-4" />
-                  ) : (
-                    <Eye className="size-4" />
-                  )}
-                </button>
-              </div>
-              {errors.password && (
-                <p className="mt-1 text-xs text-[var(--bear)]">
-                  {errors.password}
-                </p>
-              )}
-            </div>
-
             {/* Server */}
             <div className="mb-4">
               <Label
@@ -361,23 +401,8 @@ function LoginCard({ onBrowseAsGuest }: LoginCardProps) {
               </Select>
             </div>
 
-            {/* Account type toggle (synced with pending) */}
             <div className="mb-4">
-              <Label className="mb-1.5 block text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
-                Account type
-              </Label>
-              <div className="flex gap-2">
-                <AccountTypePill
-                  type="real"
-                  active={pendingAccountType === "real"}
-                  onSelect={(t) => setPendingAccountType(t)}
-                />
-                <AccountTypePill
-                  type="demo"
-                  active={pendingAccountType === "demo"}
-                  onSelect={(t) => setPendingAccountType(t)}
-                />
-              </div>
+              <p className="text-[10px] text-muted-foreground">Only the verified owner’s local demo account is supported.</p>
             </div>
 
             <Button

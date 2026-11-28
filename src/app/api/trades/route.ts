@@ -60,7 +60,7 @@ export async function GET() {
     const { data, error } = await supabaseAdmin
       .from("trades")
       .select("*")
-      .eq("user_id", session.userId)
+      .eq("application_user_id", session.userId)
       .order("datetime", { ascending: false })
       .limit(TRADES_LIMIT);
     if (error) {
@@ -137,6 +137,7 @@ export async function POST(request: Request) {
         .from("trades")
         .select("*")
         .eq("client_order_id", clientOrderId)
+        .eq("application_user_id", session.userId)
         .maybeSingle();
       if (existing) {
         return NextResponse.json({
@@ -170,7 +171,7 @@ export async function POST(request: Request) {
     broker_open_time: body.brokerOpenTime ?? null,
     broker_close_time: body.brokerCloseTime ?? null,
     hold_time_ms: body.holdTimeMs ?? null,
-    user_id: session.userId,
+    application_user_id: session.userId,
   };
 
   try {

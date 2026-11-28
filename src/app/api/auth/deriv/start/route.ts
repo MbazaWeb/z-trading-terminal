@@ -6,6 +6,7 @@ import {
   DERIV_OAUTH_VERIFIER_COOKIE,
   getDerivRedirectUri,
 } from "@/lib/derivOAuth";
+import { requireAuth } from "@/lib/auth/session";
 
 const DERIV_AUTHORIZATION_URL = "https://auth.deriv.com/oauth2/auth";
 const OAUTH_COOKIE_MAX_AGE = 10 * 60;
@@ -17,6 +18,11 @@ function redirectToAppWithError(request: NextRequest, error: string) {
 }
 
 export async function GET(request: NextRequest) {
+  try {
+    await requireAuth();
+  } catch {
+    return NextResponse.redirect(new URL("/?auth_required=deriv", request.url));
+  }
   const clientId = process.env.DERIV_CLIENT_ID?.trim();
   if (!clientId) return redirectToAppWithError(request, "configuration");
 

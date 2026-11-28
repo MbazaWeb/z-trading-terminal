@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { requireAuth, authErrorResponse } from "@/lib/auth/session";
 import { fetchDerivBalanceServer } from "@/lib/derivApiServer";
+import { supabaseAdmin } from "@/lib/supabaseServer";
+import { decryptCredential } from "@/lib/brokerCredentials";
 
 /**
  * GET /api/deriv/balance
@@ -16,14 +18,32 @@ import { fetchDerivBalanceServer } from "@/lib/derivApiServer";
 export async function GET() {
   try {
     const session = await requireAuth();
-    if (session.provider !== "deriv" || !session.accessToken) {
+    if (session.provider !== "deriv") {
       return NextResponse.json(
-        { error: "No Deriv access token in session" },
+        { error: "No Deriv account selected" },
         { status: 400 },
       );
     }
-
-    const info = await fetchDerivBalanceServer(session.accessToken);
+    const { data: account, error: accountError } = await supabaseAdmin
+      .from("broker_accounts")
+      .select("id,account_number")
+      .eq("user_id", session.userId)
+      .eq("broker", "deriv")
+      .eq("account_number", session.loginid ?? "")
+      .eq("connection_status", "connected")
+      .maybeSingle();
+    if (accountError) throw accountError;
+    if (!account) return NextResponse.json({ error: "Deriv account not connected" }, { status: 403 });
+    const { data: credential, error: credentialError } = await supabaseAdmin
+      .from("broker_credentials")
+      .select("ciphertext,iv")
+      .eq("broker_account_id", account.id)
+      .eq("user_id", session.userId)
+      .maybeSingle();
+    if (credentialError) throw credentialError;
+    if (!credential) return NextResponse.json({ error: "Deriv authorization unavailable" }, { status: 400 });
+    const accessToken = decryptCredential(credential.ciphertext, credential.iv);
+    const info = await fetchDerivBalanceServer(accessToken);
     return NextResponse.json({
       configured: true,
       balance: info.balance,

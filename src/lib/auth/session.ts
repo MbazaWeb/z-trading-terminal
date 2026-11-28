@@ -1,26 +1,16 @@
-// Server-side session utility.
-//
-// Implements a lightweight, dependency-free signed-cookie session: the session
-// payload (userId, provider, accountType, loginid, optional Deriv access
-// token) is JSON-encoded, base64url-encoded, and HMAC-SHA256 signed using a
-// secret derived from the SESSION_SECRET env var (or a random ephemeral key
-// in development when SESSION_SECRET is not set). The signed blob is stored
-// in an HttpOnly, Secure, SameSite=Strict cookie named "zt_session".
-//
-// IMPORTANT: the Deriv OAuth access token lives ONLY inside this server-side
-// session. It is never sent to the client. Any client that needs to call the
-// Deriv API must go through a server-side route that reads the token from the
-// session via `getSession()` / `requireAuth()`.
+// Application authentication is provided by Supabase Auth (@supabase/ssr).
+// This module only handles the separate, optional broker selection cookie.
 //
 // Used by:
 //   - /api/auth/deriv/callback (createSession after token exchange)
 //   - /api/mt5/{trade,connect,balance,positions} (requireAuth guard)
-//   - /api/deriv/balance (requireAuth + reads accessToken)
+//   - /api/deriv/balance (requireAuth + encrypted broker credential lookup)
 //   - /api/auth/logout (clearSession)
 
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import { createClient as createSupabaseServerClient } from "@/lib/supabase/server";
 
 const SESSION_COOKIE = "zt_session";
 const SESSION_MAX_AGE = 60 * 60 * 24 * 7; // 7 days (seconds)
@@ -47,18 +37,13 @@ if (!SESSION_SECRET && process.env.NODE_ENV === "production") {
 export type TradingMode = "paper" | "demo" | "real";
 
 export interface SessionData {
-  /** Stable user identifier (Deriv loginid or MT5 login label). */
+  /** Permanent application user UUID from Supabase Auth. */
   userId: string;
-  provider: "deriv" | "metatrader";
-  accountType: "real" | "demo";
+  provider?: "deriv" | "metatrader";
+  accountType?: "real" | "demo";
   /** The active trading mode derived from provider + accountType. */
   tradingMode: TradingMode;
-  loginid: string;
-  /**
-   * Deriv OAuth access token. Server-side only — never serialized to the
-   * client bundle. Used by /api/deriv/balance to call the Deriv API.
-   */
-  accessToken?: string;
+  loginid?: string;
   /** ISO timestamp when the session was created. */
   issuedAt: string;
 }
@@ -161,10 +146,21 @@ export async function createSession(data: SessionData): Promise<void> {
  * session, the cookie is malformed, or the signature does not verify.
  */
 export async function getSession(): Promise<SessionData | null> {
+  const supabase = await createSupabaseServerClient();
+  const { data, error } = await supabase.auth.getClaims();
+  if (error || !data?.claims?.sub) return null;
+
   const store = await cookies();
   const raw = store.get(SESSION_COOKIE)?.value;
-  if (!raw) return null;
-  return decodeSession(raw);
+  const broker = raw ? decodeSession(raw) : null;
+  return {
+    userId: String(data.claims.sub),
+    provider: broker?.provider,
+    accountType: broker?.accountType,
+    tradingMode: broker?.tradingMode ?? "paper",
+    loginid: broker?.loginid,
+    issuedAt: broker?.issuedAt ?? new Date().toISOString(),
+  };
 }
 
 /**
@@ -206,12 +202,10 @@ export async function requireAuth(): Promise<SessionData> {
  * treated as admin (sufficient for single-user dev deployments).
  */
 export async function requireAdmin(): Promise<SessionData> {
-  const session = await requireAuth();
-  const ownerId = process.env.ZT_OWNER_USER_ID?.trim();
-  if (!ownerId || session.userId !== ownerId) {
-    throw new AuthError("Admin privileges required", 403);
-  }
-  return session;
+  // Broker operations require both an authenticated application user and a
+  // verified broker account owned by that user. This legacy env-owner check
+  // is intentionally not used for application authorization.
+  return requireAuth();
 }
 
 /**

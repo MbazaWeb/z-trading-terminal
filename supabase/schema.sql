@@ -204,8 +204,10 @@ alter table public.bot_positions enable row level security;
 alter table public.bot_logs enable row level security;
 alter table public.bot_config enable row level security;
 
+drop policy if exists "Users can read own profile" on public.app_users;
 create policy "Users can read own profile" on public.app_users
   for select using (auth.uid() = supabase_auth_id);
+drop policy if exists "Users can update own profile" on public.app_users;
 create policy "Users can update own profile" on public.app_users
   for update using (auth.uid() = supabase_auth_id);
 
@@ -213,21 +215,26 @@ create policy "Users can update own profile" on public.app_users
 -- service-role client (supabaseAdmin) which bypasses RLS.
 drop policy if exists "Users can read own trades" on public.trades;
 drop policy if exists "Users can insert own trades" on public.trades;
+drop policy if exists "Public read access to trades" on public.trades;
 create policy "Public read access to trades" on public.trades
   for select using (true);
 
+drop policy if exists "Users can read own bot positions" on public.bot_positions;
 create policy "Users can read own bot positions" on public.bot_positions
   for select using (
     user_id in (select id from public.app_users where supabase_auth_id = auth.uid())
   );
 
+drop policy if exists "Users can read own bot logs" on public.bot_logs;
 create policy "Users can read own bot logs" on public.bot_logs
   for select using (
     user_id in (select id from public.app_users where supabase_auth_id = auth.uid())
   );
 
+drop policy if exists "Anyone can read agents" on public.agents;
 create policy "Anyone can read agents" on public.agents
   for select using (true);
+drop policy if exists "Anyone can read agent improvements" on public.agent_improvements;
 create policy "Anyone can read agent improvements" on public.agent_improvements
   for select using (true);
 
@@ -242,14 +249,17 @@ begin
 end;
 $$ language plpgsql;
 
-create trigger if not exists trg_app_users_updated
+drop trigger if exists trg_app_users_updated on public.app_users;
+create trigger trg_app_users_updated
   before update on public.app_users
   for each row execute function public.handle_updated_at();
 
-create trigger if not exists trg_agents_updated
+drop trigger if exists trg_agents_updated on public.agents;
+create trigger trg_agents_updated
   before update on public.agents
   for each row execute function public.handle_updated_at();
 
-create trigger if not exists trg_bot_config_updated
+drop trigger if exists trg_bot_config_updated on public.bot_config;
+create trigger trg_bot_config_updated
   before update on public.bot_config
   for each row execute function public.handle_updated_at();

@@ -15,6 +15,7 @@ import {
   RefreshCw,
   Loader2,
   AlertCircle,
+  WalletCards,
   type LucideIcon,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -29,7 +30,7 @@ import { cn } from "@/lib/utils";
 import { useAuthStore, type TradingMode } from "@/lib/authStore";
 import { useTradeStore } from "@/lib/tradeStore";
 
-export type ViewId = "trading" | "dashboard" | "agents" | "bot" | "reports";
+export type ViewId = "trading" | "dashboard" | "agents" | "bot" | "reports" | "brokers";
 
 interface NavItem {
   id: ViewId;
@@ -43,6 +44,7 @@ const NAV_ITEMS: NavItem[] = [
   { id: "agents", label: "Agents", icon: BrainCircuit },
   { id: "bot", label: "Bot", icon: Cpu },
   { id: "reports", label: "Reports", icon: FileText },
+  { id: "brokers", label: "Broker Accounts", icon: WalletCards },
 ];
 
 interface SidebarProps {

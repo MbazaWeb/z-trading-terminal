@@ -10,6 +10,7 @@ import { AgentsView } from "@/components/views/AgentsView";
 import { BotView } from "@/components/views/BotView";
 import { ReportsView } from "@/components/views/ReportsView";
 import { LoginView } from "@/components/views/LoginView";
+import { BrokerAccountsView } from "@/components/views/BrokerAccountsView";
 import { useAuthStore } from "@/lib/authStore";
 import { useDerivCallback } from "@/lib/useDerivCallback";
 import { useTradeStore, computeAgentStats } from "@/lib/tradeStore";
@@ -261,9 +262,6 @@ export default function Page() {
             setView("trading");
           }}
         />
-      ) : !accountType && isAuthenticated ? (
-        // Authenticated but no account type picked (legacy flow).
-        <AccountTypeSelectWrapper />
       ) : (
         <div className="flex flex-1">
           <Sidebar active={effectiveView} onSelect={setView} />
@@ -274,6 +272,7 @@ export default function Page() {
               {effectiveView === "agents" && <AgentsView />}
               {effectiveView === "bot" && <BotView />}
               {effectiveView === "reports" && <ReportsView />}
+              {effectiveView === "brokers" && <BrokerAccountsView />}
             </div>
           </main>
         </div>

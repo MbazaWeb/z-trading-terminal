@@ -6,6 +6,9 @@ import {
   getDerivRedirectUri,
 } from "@/lib/derivOAuth";
 import { setSessionCookie, type SessionData } from "@/lib/auth/session";
+import { requireAuth } from "@/lib/auth/session";
+import { supabaseAdmin } from "@/lib/supabaseServer";
+import { encryptCredential } from "@/lib/brokerCredentials";
 
 const DERIV_TOKEN_URL = "https://auth.deriv.com/oauth2/token";
 const DERIV_ACCOUNTS_URL =
@@ -63,6 +66,12 @@ async function readJson(response: Response): Promise<unknown> {
 }
 
 export async function GET(request: NextRequest) {
+  let appSession;
+  try {
+    appSession = await requireAuth();
+  } catch {
+    return redirectToApp(request, "application_auth_required");
+  }
   const query = request.nextUrl.searchParams;
   const code = query.get("code") || "";
   const state = query.get("state") || "";
@@ -157,17 +166,46 @@ export async function GET(request: NextRequest) {
   // sidebar (which calls /api/auth/switch-account to update the session).
   const account = accounts[0];
   const accountType: "real" | "demo" = account.account_type;
+  try {
+    const { data: brokerAccount, error } = await supabaseAdmin
+      .from("broker_accounts")
+      .upsert({
+        user_id: appSession.userId,
+        broker: "deriv",
+        account_number: account.account_id,
+        server: "Deriv",
+        currency: account.currency,
+        balance: account.balance,
+        equity: account.balance,
+        account_type: accountType,
+        connection_status: "connected",
+        last_synced_at: new Date().toISOString(),
+      }, { onConflict: "user_id,broker,account_number,server" })
+      .select("id")
+      .single();
+    if (error) throw error;
+    const encrypted = encryptCredential(accessToken);
+    await supabaseAdmin.from("broker_credentials").upsert({
+      broker_account_id: brokerAccount.id,
+      user_id: appSession.userId,
+      ciphertext: encrypted.ciphertext,
+      iv: encrypted.iv,
+      key_id: encrypted.keyId,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: "broker_account_id" });
+  } catch {
+    return redirectToApp(request, "account_storage_failed");
+  }
 
   // Enforce REAL_TRADING_ENABLED for real accounts. When real trading is
   // disabled we still issue a session so the user can see their (read-only)
   // account, but the trade endpoint will reject real orders.
   const sessionData: SessionData = {
-    userId: account.account_id,
+    userId: appSession.userId,
     provider: "deriv",
     accountType,
     tradingMode: accountType === "demo" ? "demo" : "real",
     loginid: account.account_id,
-    accessToken,
     issuedAt: new Date().toISOString(),
   };
 

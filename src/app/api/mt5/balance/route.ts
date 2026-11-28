@@ -1,74 +1,57 @@
-import { NextResponse } from "next/server";
+﻿import { NextResponse } from "next/server";
 import {
-  getConnectedRpcConnection,
-  releaseRpcConnection,
-  readMetaApiConfig,
-} from "@/lib/metaApiServer";
-import { requireAuth, authErrorResponse } from "@/lib/auth/session";
+  requireAuth,
+  authErrorResponse
+} from "@/lib/auth/session";
+import { getBridgeAccount } from "@/lib/mt5BridgeServer";
+import { supabaseAdmin } from "@/lib/supabaseServer";
 
-/**
- * GET /api/mt5/balance
- *
- * Fetches the real-time account balance, equity, margin, and leverage from
- * the configured MetaApi MT5 account. Returns HTTP 401 when no session
- * exists; HTTP 503 when MetaApi is not configured; HTTP 500 on other errors.
- *
- * The response shape is intentionally compatible with the authStore's
- * AccountInfo so the sidebar can drop it straight in.
- */
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
 export async function GET() {
-  // --- Auth guard -----------------------------------------------------------
+  let session;
   try {
-    await requireAuth();
-  } catch (err) {
-    const { status, body } = authErrorResponse(err);
+    session = await requireAuth();
+  } catch (error) {
+    const { status, body } = authErrorResponse(error);
     return NextResponse.json(body, { status });
   }
 
-  const config = readMetaApiConfig();
-  if (!config) {
+  try {
+    const { data: ownedAccount } = await supabaseAdmin
+      .from("broker_accounts")
+      .select("id")
+      .eq("user_id", session.userId)
+      .eq("broker", "mt5")
+      .eq("account_number", process.env.MT5_LOGIN?.trim() ?? "")
+      .eq("server", process.env.MT5_SERVER?.trim() ?? "")
+      .eq("connection_status", "connected")
+      .maybeSingle();
+    if (!ownedAccount) {
+      return NextResponse.json({ error: "MT5 broker account is not connected to this application user" }, { status: 403 });
+    }
+    const account = await getBridgeAccount();
+
+    return NextResponse.json({
+      ...account,
+      configured: true,
+      connected: true,
+      provider: "mt5",
+      platform: "mt5",
+      accountCurrency: account.currency,
+      marginLevel: account.margin > 0
+        ? account.equity / account.margin * 100
+        : null
+    });
+  } catch {
     return NextResponse.json(
       {
-        error:
-          "MetaApi not configured. Set METAAPI_TOKEN and MT5_ACCOUNT_ID env vars.",
-        configured: false,
+        configured: Boolean(process.env.MT5_BRIDGE_URL),
+        connected: false,
+        error: "MT5 account unavailable"
       },
-      { status: 503 },
+      { status: 503 }
     );
-  }
-
-  let connection:
-    | Awaited<ReturnType<typeof getConnectedRpcConnection>>["connection"]
-    | null = null;
-  try {
-    const result = await getConnectedRpcConnection();
-    connection = result.connection;
-    const info = await result.connection.getAccountInformation();
-    return NextResponse.json({
-      configured: true,
-      balance: Number.isFinite(info.balance) ? info.balance : 0,
-      currency: info.currency || "USD",
-      equity: Number.isFinite(info.equity) ? info.equity : info.balance,
-      margin: Number.isFinite(info.margin) ? info.margin : 0,
-      leverage: Number.isFinite(info.leverage) ? info.leverage : 0,
-      server: config.server,
-      login: config.login,
-      platform: info.platform,
-      broker: info.broker,
-      accountCurrency: info.currency,
-      freeMargin: info.freeMargin,
-      marginLevel: info.marginLevel,
-      tradeAllowed: info.tradeAllowed,
-    });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    return NextResponse.json(
-      { configured: true, error: message },
-      { status: 500 },
-    );
-  } finally {
-    if (connection) {
-      await releaseRpcConnection(connection);
-    }
   }
 }
