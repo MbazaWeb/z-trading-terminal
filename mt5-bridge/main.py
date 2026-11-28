@@ -33,7 +33,7 @@ def authenticate(
         raise HTTPException(401, "Unauthorized")
 
 @contextmanager
-def broker():
+def broker(*, allow_real=False):
     with LOCK:
         if not mt5.initialize():
             raise HTTPException(503, "MT5 unavailable")
@@ -45,7 +45,8 @@ def broker():
                 raise HTTPException(503, "No MT5 account")
 
             if account.trade_mode != mt5.ACCOUNT_TRADE_MODE_DEMO:
-                raise HTTPException(403, "Demo accounts only")
+                if not allow_real or account.trade_mode != mt5.ACCOUNT_TRADE_MODE_REAL:
+                    raise HTTPException(403, "Account mode not authorized")
 
             expected_login = os.getenv("MT5_LOGIN", "").strip()
             expected_server = os.getenv("MT5_SERVER", "").strip()
@@ -399,3 +400,14 @@ def recovery_candidate(requestId: UUID, symbol: str, side: str):
                              expected_type=mt5.DEAL_TYPE_BUY if side == "buy" else mt5.DEAL_TYPE_SELL)
         return {**result, "login": str(account.login), "server": account.server,
                 "accountType": "demo", "historyWindowDays": 7, "executable": False}
+
+
+@app.get("/verified-account", dependencies=[Depends(authenticate)])
+def verified_account():
+    # Read-only identity discovery. Existing execution routes remain demo-only.
+    with broker(allow_real=True) as account:
+        return {"login": str(account.login), "server": account.server,
+                "accountType": "real" if account.trade_mode == mt5.ACCOUNT_TRADE_MODE_REAL else "demo",
+                "currency": account.currency, "balance": account.balance,
+                "equity": account.equity, "freeMargin": account.margin_free,
+                "tradeAllowed": bool(account.trade_allowed), "executable": False}
