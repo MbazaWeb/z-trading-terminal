@@ -24,8 +24,8 @@ export function TickerTape({
     () =>
       symbols.map((s) => {
         const isActive = s.id === activeSymbolId;
-        const change = isActive ? activeChangePercent : NaN;
-        const price = isActive ? livePrice : NaN;
+        const change = isActive ? activeChangePercent : s.changePercent ?? NaN;
+        const price = isActive ? livePrice : s.basePrice;
         return { symbol: s, price, change, isActive };
       }),
     [symbols, activeSymbolId, livePrice, activeChangePercent],

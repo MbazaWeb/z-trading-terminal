@@ -25,6 +25,7 @@ interface HeaderProps {
   symbols: SymbolInfo[];
   activeSymbol: SymbolInfo;
   livePrice: number;
+  marketStatus: "loading" | "ready" | "stale" | "unavailable";
   onSelectSymbol: (id: string) => void;
 }
 
@@ -52,6 +53,7 @@ export function Header({
   symbols,
   activeSymbol,
   livePrice,
+  marketStatus,
   onSelectSymbol,
 }: HeaderProps) {
   const now = useWallClock();
@@ -162,11 +164,10 @@ export function Header({
         </div>
         <div className="flex items-center gap-1.5 rounded-md border border-[var(--panel-border)] bg-[#0d1117] px-2 py-1">
           <span className="relative flex size-2">
-            <span className="absolute inline-flex size-full rounded-full bg-[var(--bull)]" />
-            <span className="relative inline-flex size-2 rounded-full bg-[var(--bull)]" />
+            <span className={cn("relative inline-flex size-2 rounded-full", marketStatus === "ready" ? "bg-[var(--bull)]" : marketStatus === "unavailable" ? "bg-[var(--bear)]" : "bg-amber-400")} />
           </span>
-          <span className="text-[11px] font-semibold tracking-wide text-[var(--bull)]">
-            FEED
+          <span className={cn("text-[11px] font-semibold tracking-wide", marketStatus === "ready" ? "text-[var(--bull)]" : marketStatus === "unavailable" ? "text-[var(--bear)]" : "text-amber-400")}>
+            {marketStatus === "ready" ? "LIVE" : marketStatus === "stale" ? "STALE" : marketStatus === "loading" ? "CONNECTING" : "UNAVAILABLE"}
           </span>
         </div>
         <Button

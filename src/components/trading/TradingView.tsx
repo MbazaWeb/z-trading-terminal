@@ -36,6 +36,7 @@ export function TradingView({ market, canTrade, onSignIn }: { market: MarketStat
         symbols={market.symbols}
         activeSymbol={market.activeSymbol}
         livePrice={market.livePrice}
+        marketStatus={market.status}
         onSelectSymbol={market.selectSymbol}
       />
 
@@ -89,7 +90,9 @@ export function TradingView({ market, canTrade, onSignIn }: { market: MarketStat
             Z TERMINAL
           </span>
           <span>
-            MT5 broker feed · Demo execution only.
+            {market.source === "COINBASE"
+              ? "Coinbase market data · Read-only. Demo execution disabled."
+              : "MT5 broker feed · Demo execution only."}
           </span>
           <span className="font-mono tabular-nums">v1.0.0</span>
         </div>

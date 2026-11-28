@@ -8,6 +8,7 @@ export interface SymbolInfo {
   kind: AssetKind;
   name: string; // e.g. "Bitcoin"
   basePrice: number;
+  changePercent?: number;
   marketCap?: number; // crypto
   peRatio?: number; // stock
 }

@@ -40,8 +40,8 @@ export function BottomPanel({
     () =>
       symbols.map((s) => {
         const isActive = s.id === activeSymbolId;
-        const change = NaN;
-        const price = isActive ? livePrice : NaN;
+        const change = s.changePercent ?? NaN;
+        const price = isActive ? livePrice : s.basePrice;
         return { symbol: s, price, change, isActive };
       }),
     [symbols, activeSymbolId, livePrice],
