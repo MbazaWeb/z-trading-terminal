@@ -95,7 +95,7 @@ export interface TradeCsvRow {
   pnlPct: number;
   result: "win" | "loss" | null;
   agentId: string | null;
-  source: "seed" | "agent" | "bot" | "manual";
+  source: "seed" | "agent" | "bot" | "manual" | "paper";
 }
 
 export function tradesToCsv(trades: TradeCsvRow[]): string {

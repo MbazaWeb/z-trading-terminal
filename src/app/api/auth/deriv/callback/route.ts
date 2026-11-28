@@ -5,6 +5,7 @@ import {
   DERIV_OAUTH_VERIFIER_COOKIE,
   getDerivRedirectUri,
 } from "@/lib/derivOAuth";
+import { setSessionCookie, type SessionData } from "@/lib/auth/session";
 
 const DERIV_TOKEN_URL = "https://auth.deriv.com/oauth2/token";
 const DERIV_ACCOUNTS_URL =
@@ -95,6 +96,7 @@ export async function GET(request: NextRequest) {
     return redirectToApp(request, "configuration");
   }
 
+  // Exchange the authorization code for an access token SERVER-SIDE.
   let tokenResponse: Response;
   try {
     tokenResponse = await fetch(DERIV_TOKEN_URL, {
@@ -122,11 +124,15 @@ export async function GET(request: NextRequest) {
     return redirectToApp(request, "token_exchange_failed");
   }
 
+  const accessToken = tokenPayload.access_token as string;
+
+  // Look up the user's trading accounts so we can record the loginid + type
+  // in the session. The access token itself never leaves the server.
   let accountsResponse: Response;
   try {
     accountsResponse = await fetch(DERIV_ACCOUNTS_URL, {
       headers: {
-        Authorization: `Bearer ${tokenPayload.access_token}`,
+        Authorization: `Bearer ${accessToken}`,
         "Deriv-App-ID": clientId,
       },
       cache: "no-store",
@@ -147,18 +153,31 @@ export async function GET(request: NextRequest) {
     : [];
   if (accounts.length === 0) return redirectToApp(request, "no_accounts");
 
-  const callbackParams = new URLSearchParams({
-    access_token: tokenPayload.access_token,
-  });
-  accounts.forEach((account, index) => {
-    const accountNumber = index + 1;
-    callbackParams.set(`acct${accountNumber}`, account.account_id);
-    callbackParams.set(`type${accountNumber}`, account.account_type);
-    callbackParams.set(`cur${accountNumber}`, account.currency);
-    callbackParams.set(`bal${accountNumber}`, String(account.balance));
-  });
+  // Pick the first active account. The client can switch account type via the
+  // sidebar (which calls /api/auth/switch-account to update the session).
+  const account = accounts[0];
+  const accountType: "real" | "demo" = account.account_type;
 
-  const appUrl = new URL("/", request.url);
-  appUrl.hash = callbackParams.toString();
-  return clearOAuthCookies(NextResponse.redirect(appUrl));
+  // Enforce REAL_TRADING_ENABLED for real accounts. When real trading is
+  // disabled we still issue a session so the user can see their (read-only)
+  // account, but the trade endpoint will reject real orders.
+  const sessionData: SessionData = {
+    userId: account.account_id,
+    provider: "deriv",
+    accountType,
+    tradingMode: accountType === "demo" ? "demo" : "real",
+    loginid: account.account_id,
+    accessToken,
+    issuedAt: new Date().toISOString(),
+  };
+
+  // Sign and persist the session in an HttpOnly cookie before redirecting.
+  // We build the redirect response first, then set both the session cookie
+  // and the OAuth-clear cookies on the SAME response so they survive the
+  // redirect (next/headers cookies() would not propagate to a returned
+  // NextResponse.redirect).
+  const appUrl = new URL("/?auth=deriv", request.url);
+  const redirect = NextResponse.redirect(appUrl);
+  setSessionCookie(redirect, sessionData);
+  return clearOAuthCookies(redirect);
 }

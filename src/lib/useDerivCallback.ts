@@ -2,7 +2,7 @@
 
 import { useEffect, useRef } from "react";
 import { toast } from "sonner";
-import { useAuthStore, type AccountInfo } from "@/lib/authStore";
+import { useAuthStore } from "@/lib/authStore";
 
 function errorDescription(error: string): string {
   switch (error) {
@@ -28,84 +28,28 @@ function showDerivError(error: string) {
   window.history.replaceState(null, "", window.location.pathname);
 }
 
-function completeLegacyCallback(
-  params: URLSearchParams,
-  loginWithDeriv: (token: string, accounts: AccountInfo[]) => void,
-) {
-  const error = params.get("error");
-  if (error) {
-    showDerivError(error);
-    return true;
-  }
-
-  const accessToken = params.get("access_token");
-  if (!accessToken) return false;
-
-  const accounts: AccountInfo[] = [];
-  for (let i = 1; ; i++) {
-    const loginid = params.get(`acct${i}`);
-    if (!loginid) break;
-    const accountType = params.get(`type${i}`);
-    const balance = Number(params.get(`bal${i}`));
-    accounts.push({
-      loginid,
-      accountType:
-        accountType === "demo" || accountType === "real"
-          ? accountType
-          : undefined,
-      currency: params.get(`cur${i}`) || "USD",
-      balance:
-        Number.isFinite(balance) && params.has(`bal${i}`)
-          ? balance
-          : loginid.startsWith("VR")
-            ? 10_000
-            : 5_000,
-      email: "",
-      name: `Deriv ${loginid}`,
-    });
-  }
-
-  if (accounts.length === 0) {
-    toast.error("No accounts returned by Deriv");
-    window.history.replaceState(null, "", window.location.pathname);
-    return true;
-  }
-
-  const pending = useAuthStore.getState().pendingAccountType;
-  const selected =
-    (pending &&
-      accounts.find(
-        (account) =>
-          account.accountType === pending ||
-          (pending === "demo" && account.loginid.startsWith("VR")) ||
-          (pending === "real" && account.loginid.startsWith("CR")),
-      )) ||
-    accounts[0];
-  loginWithDeriv(accessToken, [selected]);
-  window.history.replaceState(null, "", window.location.pathname);
-  toast.success(`Welcome back, ${selected.name || selected.loginid}`, {
-    description: `Connected via Deriv (${selected.loginid})`,
-  });
-  return true;
-}
-
 /**
  * Deriv OAuth redirect handler.
  *
- * The authorization code is exchanged by the server; the legacy fragment
- * handler remains for callbacks already in flight from the old Deriv flow.
+ * The server-side /api/auth/deriv/callback route exchanges the authorization
+ * code for an access token, stores it in the HttpOnly session cookie, and
+ * redirects to `/?auth=deriv`. This hook detects that redirect and asks the
+ * server for the redacted session info via /api/auth/me — the access token
+ * never reaches the client.
+ *
+ * Also handles error redirects (`/?deriv_error=...`) by showing a toast.
  */
 export function useDerivCallback() {
-  const loginWithDeriv = useAuthStore((s) => s.loginWithDeriv);
+  const syncFromServerSession = useAuthStore((s) => s.syncFromServerSession);
   const hasHydrated = useAuthStore((s) => s._hasHydrated);
   const ranRef = useRef(false);
 
   useEffect(() => {
     if (!hasHydrated || ranRef.current) return;
-    // Guard against SSR / non-browser environments.
     if (typeof window === "undefined") return;
 
     const query = new URLSearchParams(window.location.search);
+
     const callbackError = query.get("deriv_error");
     if (callbackError) {
       ranRef.current = true;
@@ -120,12 +64,22 @@ export function useDerivCallback() {
       return;
     }
 
-    const hash = window.location.hash;
-    if (!hash || hash.length < 2) return;
-
-    const params = new URLSearchParams(hash.slice(1));
-    if (!params.has("access_token") && !params.has("error")) return;
-    ranRef.current = true;
-    completeLegacyCallback(params, loginWithDeriv);
-  }, [hasHydrated, loginWithDeriv]);
+    // The server-side callback redirects to /?auth=deriv on success. Pick
+    // up the new session from /api/auth/me and clean the URL.
+    const authFlag = query.get("auth");
+    if (authFlag === "deriv") {
+      ranRef.current = true;
+      void syncFromServerSession().then(() => {
+        const state = useAuthStore.getState();
+        if (state.isAuthenticated) {
+          toast.success(`Welcome back, ${state.accountInfo?.loginid ?? "trader"}`, {
+            description: `Connected via ${state.provider ?? "Deriv"} (${state.tradingMode} mode)`,
+          });
+        }
+        window.history.replaceState(null, "", window.location.pathname);
+      });
+    }
+    // No auth flag — fall through. The shell also calls syncFromServerSession
+    // on mount to pick up sessions from prior visits.
+  }, [hasHydrated, syncFromServerSession]);
 }

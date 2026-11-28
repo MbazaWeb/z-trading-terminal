@@ -215,3 +215,32 @@ export function useBot(): BotState {
 export function makePositionId(): string {
   return posId();
 }
+
+// ---- Position sizing (equity-based) ---------------------------------------
+
+/**
+ * Compute the position size (in quote currency, e.g. USD) for the next bot
+ * trade based on the REAL account balance and the bot's risk-per-trade %.
+ *
+ * Replaces the old `5000 * riskPerTrade / 100` hardcoded fallback that
+ * ignored the actual account balance. The caller supplies the live balance
+ * from the auth store; if it is null/0/NaN the function returns 0 so the
+ * caller can refuse to place the trade ("Account balance not available").
+ *
+ * The result is clamped to [0, config.maxPositionSize].
+ */
+export function computeEquityPositionSize(
+  accountBalance: number | null | undefined,
+  config: BotConfig,
+): number {
+  if (
+    accountBalance == null ||
+    typeof accountBalance !== "number" ||
+    !Number.isFinite(accountBalance) ||
+    accountBalance <= 0
+  ) {
+    return 0;
+  }
+  const raw = (accountBalance * config.riskPerTrade) / 100;
+  return Math.min(config.maxPositionSize, Math.max(0, raw));
+}

@@ -142,6 +142,7 @@ export type RpcConnection = {
     stopLoss?: number,
     takeProfit?: number,
   ): Promise<MetaApiTradeResponse>;
+  closePosition(positionId: string): Promise<void>;
   close(): Promise<void>;
 };
 

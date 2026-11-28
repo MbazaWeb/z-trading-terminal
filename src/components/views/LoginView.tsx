@@ -74,10 +74,15 @@ function AccountTypePill({
   );
 }
 
-function LoginCard() {
+interface LoginCardProps {
+  onBrowseAsGuest?: () => void;
+}
+
+function LoginCard({ onBrowseAsGuest }: LoginCardProps) {
   const pendingAccountType = useAuthStore((s) => s.pendingAccountType);
   const setPendingAccountType = useAuthStore((s) => s.setPendingAccountType);
   const loginWithMetaTrader = useAuthStore((s) => s.loginWithMetaTrader);
+  const syncFromServerSession = useAuthStore((s) => s.syncFromServerSession);
 
   const [showMt5Form, setShowMt5Form] = useState(false);
   const [loginNumber, setLoginNumber] = useState("");
@@ -98,7 +103,14 @@ function LoginCard() {
     setErrors({});
   };
 
-  const handleMt5Submit = (e: React.FormEvent) => {
+  /**
+   * Submit MetaTrader credentials to the server-side /api/auth/mt5-login
+   * endpoint. The server creates an HttpOnly session cookie and returns the
+   * redacted loginid + account type — the password is NOT stored anywhere
+   * (it's only used for one-time MetaApi provisioning via /api/mt5/connect,
+   * which requires admin privileges).
+   */
+  const handleMt5Submit = async (e: React.FormEvent) => {
     e.preventDefault();
     const next: { login?: string; password?: string } = {};
     if (!loginNumber.trim()) next.login = "Account number is required";
@@ -108,14 +120,40 @@ function LoginCard() {
 
     setSubmitting(true);
     const chosenType: PendingAccountType = pendingAccountType ?? "real";
-    setTimeout(() => {
-      const loginid = `MT5-${loginNumber.trim()}`;
-      loginWithMetaTrader(loginid, chosenType);
-      setSubmitting(false);
-      toast.success("Connected to MetaTrader", {
-        description: `Logged in as ${loginid} (${server})`,
+    try {
+      const res = await fetch("/api/auth/mt5-login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          login: loginNumber.trim(),
+          server,
+          accountType: chosenType,
+        }),
       });
-    }, 1500);
+      if (!res.ok) {
+        const err = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(err.error ?? `HTTP ${res.status}`);
+      }
+      const data = (await res.json()) as {
+        loginid: string;
+        accountType: "real" | "demo";
+        realTradingEnabled?: boolean;
+      };
+      // The server session cookie is now set. Update the local auth store so
+      // the sidebar shows the loginid immediately (the balance stays "loading"
+      // until /api/mt5/balance resolves).
+      loginWithMetaTrader(data.loginid, data.accountType);
+      await syncFromServerSession();
+      toast.success("Connected to MetaTrader", {
+        description: `Logged in as ${data.loginid} (${server}) — ${data.accountType.toUpperCase()} mode`,
+      });
+    } catch (err) {
+      toast.error("MetaTrader login failed", {
+        description: err instanceof Error ? err.message : String(err),
+      });
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -165,7 +203,8 @@ function LoginCard() {
         </div>
         <p className="mt-2 text-[10px] leading-relaxed text-muted-foreground">
           Real Account is selected by default. Switch to Demo for training with
-          a $10,000 virtual balance.
+          a $10,000 virtual balance. Real trading is disabled by default — set
+          REAL_TRADING_ENABLED=true to enable.
         </p>
       </div>
 
@@ -362,18 +401,33 @@ function LoginCard() {
         </div>
       </div>
 
+      {/* Browse as guest link */}
+      {onBrowseAsGuest && (
+        <button
+          type="button"
+          onClick={onBrowseAsGuest}
+          className="mt-4 w-full text-center text-[11px] font-medium text-muted-foreground transition-colors hover:text-foreground"
+        >
+          Browse as guest (view-only market dashboard)
+        </button>
+      )}
+
       {/* Footer */}
       <p className="mt-6 text-center text-[11px] leading-relaxed text-muted-foreground">
         By signing in, you agree to the Terms of Service and Privacy Policy.
         <br />
-        Real account is the default. Trades are recorded locally and synced to
-        Supabase when configured.
+        Deriv OAuth tokens are stored in a server-side HttpOnly session cookie
+        — never in localStorage. Trades are synced to Supabase when configured.
       </p>
     </div>
   );
 }
 
-export function LoginView() {
+interface LoginViewProps {
+  onBrowseAsGuest?: () => void;
+}
+
+export function LoginView({ onBrowseAsGuest }: LoginViewProps) {
   return (
     <div className="relative flex flex-1 items-center justify-center overflow-hidden px-4 py-12">
       {/* Animated background: grid + radial glows */}
@@ -392,10 +446,10 @@ export function LoginView() {
       />
 
       <div className="relative z-10 flex w-full max-w-md flex-col items-center">
-        <LoginCard />
+        <LoginCard onBrowseAsGuest={onBrowseAsGuest} />
         <div className="mt-6 flex items-center gap-2 text-[11px] text-muted-foreground">
           <TrendingUp className="size-3.5 text-[var(--bull)]" />
-          <span>Encrypted session • No funds at risk</span>
+          <span>Encrypted session • No funds at risk in paper mode</span>
         </div>
       </div>
     </div>
