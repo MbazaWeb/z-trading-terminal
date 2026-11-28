@@ -27,7 +27,7 @@ export interface BridgePosition {
 }
 
 export async function bridgeRequest<T>(
-  path: "/account" | "/positions" | "/health" | "/market",
+  path: "/account" | "/positions" | "/health" | "/market" | "/risk-specs",
   symbol?: string
 ): Promise<T> {
   const base = process.env.MT5_BRIDGE_URL?.trim();
@@ -48,7 +48,7 @@ export async function bridgeRequest<T>(
   }
 
   const target = new URL(path, url);
-  if (path === "/market") {
+  if (path === "/market" || path === "/risk-specs") {
     if (!symbol || !/^[A-Za-z0-9._-]{1,32}$/.test(symbol)) throw new Error("Invalid symbol");
     target.searchParams.set("symbol", symbol);
   }
@@ -108,4 +108,20 @@ export async function getBridgeMarket(symbol: string) {
   const last = data.candles[data.candles.length-1];
   if (now - last.time - 60000 > 120000) throw new Error("Stale candle history");
   return { ...data, spread: data.ask - data.bid };
+}
+
+export async function getBridgeRiskSpecs(symbol: string) {
+  const { z } = await import("zod");
+  const positive = z.number().finite().positive();
+  const data = z.object({symbol:z.literal(symbol),currency:z.string().min(1),
+    login:z.string(),server:z.string(),accountType:z.literal("demo"),
+    tickSize:positive,lossTickValue:positive,minVolume:positive,maxVolume:positive,
+    volumeStep:positive,point:positive,contractSize:positive,
+    minStopDistance:z.number().finite().nonnegative(),observedAt:z.number().int().positive()
+  }).parse(await bridgeRequest<unknown>("/risk-specs",symbol));
+  const now=Date.now();
+  if(data.login!==process.env.MT5_LOGIN?.trim() || data.server!==process.env.MT5_SERVER?.trim() ||
+     data.maxVolume<data.minVolume || data.observedAt>now || now-data.observedAt>10000)
+    throw new Error("Invalid or stale broker risk specifications");
+  return data;
 }
