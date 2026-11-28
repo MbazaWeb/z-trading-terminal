@@ -12,6 +12,10 @@ node_modules
 
 # testing
 /coverage
+__pycache__/
+*.py[cod]
+.venv/
+*.sqlite3
 
 # next.js
 /.next/
