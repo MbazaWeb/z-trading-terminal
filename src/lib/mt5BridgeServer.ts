@@ -27,9 +27,9 @@ export interface BridgePosition {
 }
 
 export async function bridgeRequest<T>(
-  path: "/verified-account" | "/account" | "/positions" | "/health" | "/market" | "/risk-specs" | "/account-risk" | "/order-check",
+  path: "/verified-account" | "/account" | "/positions" | "/health" | "/market" | "/risk-specs" | "/account-risk" | "/order-check" | "/submit-demo",
   symbol?: string,
-  order?: {symbol:string;side:"buy"|"sell";volume:number;stopLoss:number;takeProfit:number}
+  order?: {symbol:string;side:"buy"|"sell";volume:number;stopLoss:number;takeProfit:number;requestId?:string}
 ): Promise<T> {
   const base = process.env.MT5_BRIDGE_URL?.trim();
   const key = process.env.MT5_BRIDGE_KEY?.trim();
@@ -54,8 +54,8 @@ export async function bridgeRequest<T>(
     target.searchParams.set("symbol", symbol);
   }
   const response = await fetch(target, {
-    method: path === "/order-check" ? "POST" : "GET",
-    body: path === "/order-check" ? JSON.stringify(order) : undefined,
+    method: (path === "/order-check" || path === "/submit-demo") ? "POST" : "GET",
+    body: (path === "/order-check" || path === "/submit-demo") ? JSON.stringify(order) : undefined,
     headers: {
       "X-Bridge-Key": key,
       "Accept": "application/json",
@@ -169,4 +169,19 @@ export async function getVerifiedBridgeAccount() {
     throw new Error("MT5 broker identity mismatch");
   }
   return account;
+}
+
+
+// Internal transport only; the bridge route must independently authorize submission.
+export async function submitBridgeDemoOrder(order: {requestId:string;symbol:string;side:"buy"|"sell";volume:number;stopLoss:number;takeProfit:number}) {
+  const {z}=await import("zod");
+  if(process.env.MT5_DEMO_EXECUTION!=="true" || process.env.REAL_TRADING_ENABLED!=="false")
+    throw new Error("Demo execution disabled");
+  z.uuid().parse(order.requestId);
+  const account=await getBridgeAccount();
+  if(!account.tradeAllowed) throw new Error("Broker trading unavailable");
+  return z.discriminatedUnion("status",[
+    z.object({status:z.literal("confirmed"),brokerOrderId:z.string().regex(/^[1-9][0-9]*$/)}),
+    z.object({status:z.literal("unknown")})
+  ]).parse(await bridgeRequest<unknown>("/submit-demo",undefined,order));
 }
