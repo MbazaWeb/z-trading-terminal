@@ -188,3 +188,52 @@ def market(symbol: str):
         return {"symbol": symbol, "bid": tick.bid, "ask": tick.ask,
                 "observedAt": tick.time * 1000, "candles": candles,
                 "volumeType": "tick_count", "provider": "mt5", "accountType": "demo"}
+
+from pydantic import BaseModel, Field
+from typing import Literal
+import math
+import time
+
+class PreflightRequest(BaseModel):
+    symbol: str = Field(pattern=r"^[A-Za-z0-9._-]{1,32}$")
+    side: Literal["buy", "sell"]
+    volume: float = Field(gt=0, allow_inf_nan=False)
+    stopLoss: float = Field(gt=0, allow_inf_nan=False)
+    takeProfit: float = Field(gt=0, allow_inf_nan=False)
+
+@app.post("/preflight", dependencies=[Depends(authenticate)])
+def preflight(order: PreflightRequest):
+    with broker() as account:
+        if not account.trade_allowed or not account.trade_expert:
+            raise HTTPException(403, "Trading unavailable")
+        if not mt5.symbol_select(order.symbol, True):
+            raise HTTPException(404, "Symbol unavailable")
+        info = mt5.symbol_info(order.symbol)
+        tick = mt5.symbol_info_tick(order.symbol)
+        if info is None or tick is None or info.trade_mode != mt5.SYMBOL_TRADE_MODE_FULL:
+            raise HTTPException(503, "Market unavailable")
+        if not all(math.isfinite(x) for x in (tick.bid, tick.ask)) or not 0 < tick.bid <= tick.ask or not 0 <= time.time() - tick.time <= 10:
+            raise HTTPException(503, "Invalid or stale quote")
+        if info.volume_step <= 0 or not info.volume_min <= order.volume <= info.volume_max:
+            raise HTTPException(422, "Invalid volume")
+        steps = (order.volume - info.volume_min) / info.volume_step
+        if abs(steps - round(steps)) > 1e-7:
+            raise HTTPException(422, "Invalid volume step")
+        buy = order.side == "buy"
+        kind = mt5.ORDER_TYPE_BUY if buy else mt5.ORDER_TYPE_SELL
+        entry = tick.ask if buy else tick.bid
+        distance = tick.bid - order.stopLoss if buy else order.stopLoss - tick.ask
+        reward = order.takeProfit - entry if buy else entry - order.takeProfit
+        risk = entry - order.stopLoss if buy else order.stopLoss - entry
+        if distance <= 0 or distance < info.trade_stops_level * info.point or reward < 1.5 * risk:
+            raise HTTPException(422, "Invalid protective levels")
+        margin = mt5.order_calc_margin(kind, order.symbol, order.volume, entry)
+        pnl = mt5.order_calc_profit(kind, order.symbol, order.volume, entry, order.stopLoss)
+        if margin is None or pnl is None or not all(math.isfinite(x) for x in (margin, pnl, account.equity, account.margin_free)) or margin <= 0 or pnl >= 0:
+            raise HTTPException(503, "Broker calculation unavailable")
+        if margin > account.margin_free * 0.8 or -pnl > account.equity * 0.02:
+            raise HTTPException(422, "Broker risk limit exceeded")
+        return {"symbol": order.symbol, "side": order.side, "volume": order.volume,
+                "entry": entry, "margin": margin, "estimatedStopLoss": -pnl,
+                "currency": account.currency, "observedAt": tick.time * 1000,
+                "accountType": "demo", "executable": False}
