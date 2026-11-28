@@ -237,3 +237,35 @@ def preflight(order: PreflightRequest):
                 "entry": entry, "margin": margin, "estimatedStopLoss": -pnl,
                 "currency": account.currency, "observedAt": tick.time * 1000,
                 "accountType": "demo", "executable": False}
+
+@app.post("/order-check", dependencies=[Depends(authenticate)])
+def order_check(order: PreflightRequest):
+    # Read-only validation; never sends an order.
+    with LOCK:
+        estimate = preflight(order)
+        with broker() as account:
+            info = mt5.symbol_info(order.symbol)
+            tick = mt5.symbol_info_tick(order.symbol)
+            if info is None or tick is None or not account.trade_allowed or not account.trade_expert:
+                raise HTTPException(503, "Trading unavailable")
+            if not 0 <= time.time() - tick.time <= 10:
+                raise HTTPException(503, "Stale quote")
+            buy = order.side == "buy"
+            entry = tick.ask if buy else tick.bid
+            if not math.isfinite(entry) or entry <= 0 or entry != estimate["entry"]:
+                raise HTTPException(409, "Quote changed; repeat preflight")
+            kind = mt5.ORDER_TYPE_BUY if buy else mt5.ORDER_TYPE_SELL
+            request = {"action": mt5.TRADE_ACTION_DEAL, "symbol": order.symbol,
+                       "volume": order.volume, "type": kind, "price": entry,
+                       "sl": order.stopLoss, "tp": order.takeProfit,
+                       "type_time": mt5.ORDER_TIME_GTC}
+            if info.filling_mode & 1:
+                request["type_filling"] = mt5.ORDER_FILLING_FOK
+            elif info.filling_mode & 2:
+                request["type_filling"] = mt5.ORDER_FILLING_IOC
+            else:
+                raise HTTPException(422, "Unsupported filling policy")
+            result = mt5.order_check(request)
+            if result is None or result.retcode != 0:
+                raise HTTPException(422, "Broker order check rejected")
+            return {**estimate, "brokerCheckPassed": True, "executable": False}
