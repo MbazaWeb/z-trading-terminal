@@ -27,7 +27,8 @@ export interface BridgePosition {
 }
 
 export async function bridgeRequest<T>(
-  path: "/account" | "/positions" | "/health"
+  path: "/account" | "/positions" | "/health" | "/market",
+  symbol?: string
 ): Promise<T> {
   const base = process.env.MT5_BRIDGE_URL?.trim();
   const key = process.env.MT5_BRIDGE_KEY?.trim();
@@ -46,7 +47,12 @@ export async function bridgeRequest<T>(
     throw new Error("Insecure MT5 bridge URL");
   }
 
-  const response = await fetch(new URL(path, url), {
+  const target = new URL(path, url);
+  if (path === "/market") {
+    if (!symbol || !/^[A-Za-z0-9._-]{1,32}$/.test(symbol)) throw new Error("Invalid symbol");
+    target.searchParams.set("symbol", symbol);
+  }
+  const response = await fetch(target, {
     method: "GET",
     headers: {
       "X-Bridge-Key": key,
@@ -83,4 +89,23 @@ export async function getBridgeAccount(): Promise<BridgeAccount> {
   }
 
   return account;
+}
+
+export async function getBridgeMarket(symbol: string) {
+  const { z } = await import("zod");
+  const price = z.number().finite().positive();
+  const schema = z.object({ symbol: z.string(), bid: price, ask: price,
+    observedAt: z.number().int().positive(), provider: z.literal("mt5"),
+    accountType: z.literal("demo"), volumeType: z.literal("tick_count"),
+    candles: z.array(z.object({ time: z.number().int().positive(), open: price,
+      high: price, low: price, close: price, volume: z.number().finite().nonnegative() })).min(50).max(150) });
+  const data = schema.parse(await bridgeRequest<unknown>("/market", symbol));
+  const now = Date.now();
+  if (data.symbol !== symbol || data.ask < data.bid || data.observedAt > now ||
+      now - data.observedAt > 60000 || data.candles.some((c,i) =>
+      c.low > Math.min(c.open,c.close) || c.high < Math.max(c.open,c.close) ||
+      c.time + 60000 > now || (i > 0 && c.time <= data.candles[i-1].time))) throw new Error("Invalid market snapshot");
+  const last = data.candles[data.candles.length-1];
+  if (now - last.time - 60000 > 120000) throw new Error("Stale candle history");
+  return { ...data, spread: data.ask - data.bid };
 }
