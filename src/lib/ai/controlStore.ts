@@ -20,6 +20,6 @@ export async function setAIControls(db: PrismaClient, userId: string, next: {
     await tx.$executeRaw`INSERT INTO private.ai_controls(user_id) VALUES (${userId}::uuid) ON CONFLICT DO NOTHING`;
     const count = await tx.$executeRaw`UPDATE private.ai_controls SET running = ${next.running}, emergency_stop = ${next.emergencyStop}, enabled_agent_ids = ${ids}::text[], revision = revision + 1, updated_at = now() WHERE user_id = ${userId}::uuid AND revision = ${BigInt(next.revision)}`;
     if (count !== 1) throw new Error("AI controls changed; reload before updating");
-    return { revision: (BigInt(next.revision) + 1n).toString() };
+    return { revision: (BigInt(next.revision) + BigInt(1)).toString() };
   });
 }
