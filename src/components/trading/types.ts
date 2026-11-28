@@ -1,15 +1,12 @@
-export type AssetKind = "crypto" | "stock";
+export type AssetKind = "crypto";
 
 export interface SymbolInfo {
-  id: string;
+  id: string; // Binance symbol, e.g. "BTCUSDT"
   label: string; // e.g. "BTC/USDT"
   base: string; // e.g. "BTC"
   quote: string; // e.g. "USDT"
   kind: AssetKind;
   name: string; // e.g. "Bitcoin"
-  basePrice: number;
-  marketCap?: number; // crypto
-  peRatio?: number; // stock
 }
 
 export type Timeframe = "1m" | "5m" | "15m" | "1H" | "4H" | "1D" | "1W";
@@ -52,10 +49,8 @@ export interface TickerStats {
   changePercent: number;
   high24h: number;
   low24h: number;
-  volume24h: number; // quote currency
+  volume24h: number; // quote currency (USDT)
   volumeBase24h: number; // base asset
-  marketCap?: number;
-  peRatio?: number;
 }
 
 export type ChartType = "candles" | "line" | "area";

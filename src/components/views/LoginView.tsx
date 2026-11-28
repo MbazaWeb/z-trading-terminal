@@ -90,7 +90,7 @@ function LoginCard() {
   );
 
   const handleDeriv = () => {
-    setPendingAccountType(pendingAccountType ?? "demo");
+    setPendingAccountType(pendingAccountType ?? "real");
   };
 
   const toggleMt5 = () => {
@@ -107,7 +107,7 @@ function LoginCard() {
     if (next.login || next.password) return;
 
     setSubmitting(true);
-    const chosenType: PendingAccountType = pendingAccountType ?? "demo";
+    const chosenType: PendingAccountType = pendingAccountType ?? "real";
     setTimeout(() => {
       const loginid = `MT5-${loginNumber.trim()}`;
       loginWithMetaTrader(loginid, chosenType);
@@ -153,16 +153,20 @@ function LoginCard() {
         </Label>
         <div className="flex gap-2">
           <AccountTypePill
-            type="demo"
-            active={pendingAccountType === "demo"}
-            onSelect={(t) => setPendingAccountType(t)}
-          />
-          <AccountTypePill
             type="real"
             active={pendingAccountType === "real"}
             onSelect={(t) => setPendingAccountType(t)}
           />
+          <AccountTypePill
+            type="demo"
+            active={pendingAccountType === "demo"}
+            onSelect={(t) => setPendingAccountType(t)}
+          />
         </div>
+        <p className="mt-2 text-[10px] leading-relaxed text-muted-foreground">
+          Real Account is selected by default. Switch to Demo for training with
+          a $10,000 virtual balance.
+        </p>
       </div>
 
       {/* Deriv button */}
@@ -325,13 +329,13 @@ function LoginCard() {
               </Label>
               <div className="flex gap-2">
                 <AccountTypePill
-                  type="demo"
-                  active={pendingAccountType === "demo"}
+                  type="real"
+                  active={pendingAccountType === "real"}
                   onSelect={(t) => setPendingAccountType(t)}
                 />
                 <AccountTypePill
-                  type="real"
-                  active={pendingAccountType === "real"}
+                  type="demo"
+                  active={pendingAccountType === "demo"}
                   onSelect={(t) => setPendingAccountType(t)}
                 />
               </div>
@@ -362,7 +366,8 @@ function LoginCard() {
       <p className="mt-6 text-center text-[11px] leading-relaxed text-muted-foreground">
         By signing in, you agree to the Terms of Service and Privacy Policy.
         <br />
-        This is a demo application — no real trades are executed.
+        Real account is the default. Trades are recorded locally and synced to
+        Supabase when configured.
       </p>
     </div>
   );

@@ -63,7 +63,8 @@ const DEFAULT_STATE = {
   accountType: null as AccountType,
   accountInfo: null as AccountInfo | null,
   accessToken: null as string | null,
-  pendingAccountType: "demo" as PendingAccountType | null,
+  // Default to REAL account — demo is opt-in for training only.
+  pendingAccountType: "real" as PendingAccountType | null,
   _hasHydrated: false,
 };
 

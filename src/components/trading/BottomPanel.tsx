@@ -29,25 +29,6 @@ function formatTradeTime(time: number): string {
   return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 }
 
-function seededChange(symbol: SymbolInfo): number {
-  let h = 2166136261;
-  const s = symbol.id + "pairs";
-  for (let i = 0; i < s.length; i++) {
-    h ^= s.charCodeAt(i);
-    h = Math.imul(h, 16777619);
-  }
-  h >>>= 0;
-  return (h % 1200) / 100 - 6 + Math.sin(Date.now() / 60000 + h) * 0.4;
-}
-
-const FAKE_ORDERS = [
-  { id: "#A8F21", pair: "BTC/USDT", type: "Limit", side: "buy" as const, price: 67100, amount: 0.25, filled: 42, status: "Partial" },
-  { id: "#A8F22", pair: "ETH/USDT", type: "Limit", side: "sell" as const, price: 3580, amount: 3.5, filled: 0, status: "Open" },
-  { id: "#A8F23", pair: "SOL/USDT", type: "Market", side: "buy" as const, price: 164.2, amount: 50, filled: 100, status: "Filled" },
-  { id: "#A8F24", pair: "BNB/USDT", type: "Stop", side: "sell" as const, price: 590, amount: 12, filled: 0, status: "Open" },
-  { id: "#A8F25", pair: "AAPL", type: "Limit", side: "buy" as const, price: 222.5, amount: 100, filled: 18, status: "Partial" },
-];
-
 export function BottomPanel({
   trades,
   symbols,
@@ -55,13 +36,13 @@ export function BottomPanel({
   livePrice,
   onSelectSymbol,
 }: BottomPanelProps) {
+  // Pairs tab: show only the active symbol's live price (we don't fetch every
+  // symbol here to keep this lightweight — the TickerTape already does that).
   const pairs = useMemo(
     () =>
       symbols.map((s) => {
         const isActive = s.id === activeSymbolId;
-        const change = isActive ? 0 : seededChange(s);
-        const price = isActive ? livePrice : s.basePrice * (1 + change / 100);
-        return { symbol: s, price, change, isActive };
+        return { symbol: s, price: isActive ? livePrice : 0, isActive };
       }),
     [symbols, activeSymbolId, livePrice],
   );
@@ -75,13 +56,7 @@ export function BottomPanel({
               value="trades"
               className="h-7 rounded px-3 text-xs font-semibold data-[state=active]:bg-[#1c2230] data-[state=active]:text-foreground data-[state=active]:shadow-none"
             >
-              Trades
-            </TabsTrigger>
-            <TabsTrigger
-              value="orders"
-              className="h-7 rounded px-3 text-xs font-semibold data-[state=active]:bg-[#1c2230] data-[state=active]:text-foreground data-[state=active]:shadow-none"
-            >
-              Open Orders
+              Recent Trades
             </TabsTrigger>
             <TabsTrigger
               value="pairs"
@@ -95,7 +70,7 @@ export function BottomPanel({
           </span>
         </div>
 
-        {/* Trades */}
+        {/* Recent trades (real Binance trades feed) */}
         <TabsContent value="trades" className="mt-0 flex-1 outline-none">
           <div className="grid grid-cols-3 px-3 py-1.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
             <span className="text-left">Price</span>
@@ -137,73 +112,6 @@ export function BottomPanel({
           </div>
         </TabsContent>
 
-        {/* Open Orders */}
-        <TabsContent value="orders" className="mt-0 flex-1 outline-none">
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs">
-              <thead>
-                <tr className="border-b border-[var(--panel-border)] text-[10px] uppercase tracking-wider text-muted-foreground">
-                  <th className="px-3 py-1.5 font-medium">Order ID</th>
-                  <th className="px-3 py-1.5 font-medium">Pair</th>
-                  <th className="px-3 py-1.5 font-medium">Type</th>
-                  <th className="px-3 py-1.5 font-medium">Side</th>
-                  <th className="px-3 py-1.5 text-right font-medium">Price</th>
-                  <th className="px-3 py-1.5 text-right font-medium">Amount</th>
-                  <th className="px-3 py-1.5 text-right font-medium">Filled</th>
-                  <th className="px-3 py-1.5 text-right font-medium">Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                {FAKE_ORDERS.map((o) => (
-                  <tr
-                    key={o.id}
-                    className="border-b border-[var(--panel-border)]/50 transition-colors hover:bg-[#11161f]"
-                  >
-                    <td className="px-3 py-1.5 font-mono text-muted-foreground">
-                      {o.id}
-                    </td>
-                    <td className="px-3 py-1.5 font-mono font-medium">
-                      {o.pair}
-                    </td>
-                    <td className="px-3 py-1.5 text-foreground/80">{o.type}</td>
-                    <td
-                      className={cn(
-                        "px-3 py-1.5 font-medium",
-                        o.side === "buy"
-                          ? "text-[var(--bull)]"
-                          : "text-[var(--bear)]",
-                      )}
-                    >
-                      {o.side === "buy" ? "Buy" : "Sell"}
-                    </td>
-                    <td className="px-3 py-1.5 text-right font-mono tabular-nums">
-                      {formatPrice(o.price, priceDecimals(o.price))}
-                    </td>
-                    <td className="px-3 py-1.5 text-right font-mono tabular-nums text-foreground/80">
-                      {o.amount}
-                    </td>
-                    <td className="px-3 py-1.5 text-right font-mono tabular-nums text-foreground/60">
-                      {o.filled}%
-                    </td>
-                    <td
-                      className={cn(
-                        "px-3 py-1.5 text-right font-medium",
-                        o.status === "Filled"
-                          ? "text-[var(--bull)]"
-                          : o.status === "Partial"
-                            ? "text-[#f0b90b]"
-                            : "text-muted-foreground",
-                      )}
-                    >
-                      {o.status}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </TabsContent>
-
         {/* Market Pairs */}
         <TabsContent value="pairs" className="mt-0 flex-1 outline-none">
           <div className="overflow-x-auto">
@@ -214,15 +122,11 @@ export function BottomPanel({
                   <th className="px-3 py-1.5 text-right font-medium">
                     Last Price
                   </th>
-                  <th className="px-3 py-1.5 text-right font-medium">
-                    24h Change
-                  </th>
                   <th className="px-3 py-1.5 text-right font-medium">Type</th>
                 </tr>
               </thead>
               <tbody>
                 {pairs.map((p) => {
-                  const up = p.change >= 0;
                   return (
                     <tr
                       key={p.symbol.id}
@@ -243,16 +147,9 @@ export function BottomPanel({
                         </div>
                       </td>
                       <td className="px-3 py-1.5 text-right font-mono tabular-nums">
-                        {formatPrice(p.price)}
-                      </td>
-                      <td
-                        className={cn(
-                          "px-3 py-1.5 text-right font-mono tabular-nums",
-                          up ? "text-[var(--bull)]" : "text-[var(--bear)]",
-                        )}
-                      >
-                        {up ? "+" : ""}
-                        {p.change.toFixed(2)}%
+                        {p.price > 0
+                          ? formatPrice(p.price, priceDecimals(p.price))
+                          : "--"}
                       </td>
                       <td className="px-3 py-1.5 text-right text-[11px] text-muted-foreground">
                         {p.symbol.kind === "crypto" ? "Crypto" : "Stock"}

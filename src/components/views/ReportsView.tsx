@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useMemo, useState } from "react";
+import { memo, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import {
   Bot,
@@ -15,18 +15,15 @@ import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import {
   DAY_MS,
-  DEMO_NOW,
-  INITIAL_REPORTS,
-  agentsToCsv,
   formatDate,
   formatDateTime,
   formatMoney,
   tradesToCsv,
-  useAgents,
-  useTrades,
-  type ReportFile,
-  type Trade,
-} from "@/lib/mockData";
+  agentsToCsv,
+} from "@/lib/format";
+import { useTrades, useTradeStore, computeAgentStats } from "@/lib/tradeStore";
+import { useAgents } from "@/lib/agents/agentStore";
+import type { Trade } from "@/lib/tradeStore";
 
 type ReportType = "daily" | "weekly" | "trade-history" | "agent-performance";
 
@@ -69,6 +66,14 @@ const REPORT_TYPES: ReportTypeDef[] = [
   },
 ];
 
+interface ReportFile {
+  id: string;
+  name: string;
+  type: "PDF" | "CSV";
+  generatedAt: number;
+  size: string;
+}
+
 function toDateInput(ms: number): string {
   return formatDate(ms);
 }
@@ -86,13 +91,20 @@ function filterTradesByRange(trades: Trade[], fromMs: number, toMs: number): Tra
 export const ReportsView = memo(function ReportsView() {
   const trades = useTrades();
   const agents = useAgents();
+  const fetchTrades = useTradeStore((s) => s.fetchTrades);
 
-  const defaultTo = DEMO_NOW;
-  const defaultFrom = DEMO_NOW - 6 * DAY_MS;
+  // Load trades on mount.
+  useEffect(() => {
+    fetchTrades();
+  }, [fetchTrades]);
+
+  const now = Date.now();
+  const defaultTo = now;
+  const defaultFrom = now - 6 * DAY_MS;
   const [from, setFrom] = useState(toDateInput(defaultFrom));
   const [to, setTo] = useState(toDateInput(defaultTo));
   const [selected, setSelected] = useState<ReportType>("daily");
-  const [recent, setRecent] = useState<ReportFile[]>(INITIAL_REPORTS);
+  const [recent, setRecent] = useState<ReportFile[]>([]);
   const [printContent, setPrintContent] = useState<React.ReactNode>(null);
 
   const fromMs = parseDateInput(from);
@@ -123,20 +135,13 @@ export const ReportsView = memo(function ReportsView() {
   const agentStats = useMemo(
     () =>
       agents.map((a) => {
-        const agentTrades = rangeTrades.filter(
-          (t) => t.agentId === a.id && t.status === "closed",
-        );
-        const wins = agentTrades.filter((t) => t.result === "win").length;
-        const pnl = agentTrades.reduce((s, t) => s + t.pnl, 0);
+        const st = computeAgentStats(rangeTrades, a.id);
         return {
           name: a.name,
           strategy: a.strategy,
-          totalTrades: agentTrades.length,
-          winRate:
-            agentTrades.length > 0
-              ? (wins / agentTrades.length) * 100
-              : 0,
-          pnl,
+          totalTrades: st.totalTrades,
+          winRate: st.winRate,
+          pnl: st.pnl,
           improvements: a.selfImprovements,
           confidence: a.confidence,
         };
@@ -177,8 +182,11 @@ export const ReportsView = memo(function ReportsView() {
       id: `r-${Date.now()}`,
       name: filename,
       type: ext,
-      generatedAt: DEMO_NOW,
-      size: ext === "PDF" ? `${120 + Math.floor(Math.random() * 300)} KB` : `${8 + Math.floor(Math.random() * 40)} KB`,
+      generatedAt: Date.now(),
+      size:
+        ext === "PDF"
+          ? `${120 + Math.floor(Math.random() * 300)} KB`
+          : `${8 + Math.floor(Math.random() * 40)} KB`,
     };
     setRecent((prev) => [entry, ...prev].slice(0, 12));
   }
@@ -209,7 +217,6 @@ export const ReportsView = memo(function ReportsView() {
         description: filename,
       });
     } else {
-      // PDF: populate the hidden print area and trigger window.print().
       const title =
         selected === "daily" ? "Daily Trading Report" : "Weekly Summary Report";
       setPrintContent(
@@ -222,7 +229,6 @@ export const ReportsView = memo(function ReportsView() {
           agents={agentStats}
         />,
       );
-      // Defer print so React can flush the print-area into the DOM.
       setTimeout(() => {
         window.print();
         toast.success("Print dialog opened", {
@@ -241,7 +247,7 @@ export const ReportsView = memo(function ReportsView() {
             Reports
           </h1>
           <p className="mt-0.5 text-xs text-muted-foreground">
-            Generate and download PDF / CSV reports from your trading data.
+            Generate and download PDF / CSV reports from your real trading data.
           </p>
         </div>
         <Button
@@ -372,6 +378,16 @@ export const ReportsView = memo(function ReportsView() {
               </tr>
             </thead>
             <tbody>
+              {recent.length === 0 && (
+                <tr>
+                  <td
+                    colSpan={5}
+                    className="px-3 py-8 text-center text-muted-foreground"
+                  >
+                    No reports generated yet. Click Generate Report above.
+                  </td>
+                </tr>
+              )}
               {recent.map((r) => (
                 <tr
                   key={r.id}
@@ -462,6 +478,13 @@ function CsvPreview({
             </tr>
           </thead>
           <tbody>
+            {rows.length === 0 && (
+              <tr>
+                <td colSpan={6} className="px-2 py-6 text-center text-muted-foreground">
+                  No trades in range.
+                </td>
+              </tr>
+            )}
             {rows.map((t) => (
               <tr key={t.id} className="border-b border-[var(--panel-border)]/40">
                 <td className="px-2 py-1.5 font-mono text-muted-foreground tabular-nums">
@@ -509,7 +532,6 @@ function CsvPreview({
       </div>
     );
   }
-  // agent-performance
   return (
     <div className="overflow-x-auto">
       <table className="w-full min-w-[560px] text-left text-[11px]">
@@ -774,7 +796,7 @@ function PrintReport({
         </tbody>
       </table>
       <p className="print-footer">
-        Generated by Z Terminal v1.0.0 | All data is simulated for demonstration.
+        Generated by Z Terminal v1.1.0 | Live market data from Binance public API.
       </p>
     </div>
   );

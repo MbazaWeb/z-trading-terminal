@@ -11,14 +11,11 @@ import type { MarketState } from "@/components/trading/useMarketData";
 import type { ChartType, IndicatorState } from "@/components/trading/types";
 
 /**
- * The original Bloomberg-style trading terminal. This was the entire `page.tsx`
- * before the multi-view shell was added; preserved here verbatim so the Trading
- * nav item renders exactly the same UI as before. The shell owns the shared
- * `useMarketData` instance (so the top TickerTape and this view stay in sync)
- * and passes it in via the `market` prop.
+ * Trading view — renders the live chart, order book, trade panel (with agent
+ * consensus integration), and recent-trades bottom panel. All data comes from
+ * the shared `useMarketData` hook (real Binance API).
  */
 export function TradingView({ market }: { market: MarketState }) {
-
   const [chartType, setChartType] = useState<ChartType>("candles");
   const [indicators, setIndicators] = useState<IndicatorState>({
     sma7: false,
@@ -70,6 +67,8 @@ export function TradingView({ market }: { market: MarketState }) {
             <TradePanel
               symbol={market.activeSymbol}
               livePrice={market.livePrice}
+              candles={market.candles}
+              stats={market.stats}
             />
           </div>
         </div>
@@ -91,10 +90,10 @@ export function TradingView({ market }: { market: MarketState }) {
             Z TERMINAL
           </span>
           <span>
-            All market data is simulated for demonstration. No real orders are
-            executed.
+            Live market data from Binance public API. Trades recorded locally
+            and synced to Supabase when configured.
           </span>
-          <span className="font-mono tabular-nums">v1.0.0 / build 2024</span>
+          <span className="font-mono tabular-nums">v1.1.0 / live</span>
         </div>
       </footer>
     </div>

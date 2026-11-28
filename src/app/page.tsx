@@ -11,10 +11,13 @@ import { BotView } from "@/components/views/BotView";
 import { ReportsView } from "@/components/views/ReportsView";
 import { LoginView } from "@/components/views/LoginView";
 import { AccountTypeSelect } from "@/components/views/AccountTypeSelect";
-import { useStore } from "@/lib/mockData";
 import { useAuthStore } from "@/lib/authStore";
 import { useDerivCallback } from "@/lib/useDerivCallback";
+import { useTradeStore, computeAgentStats } from "@/lib/tradeStore";
+import { useBotStore } from "@/lib/botStore";
+import { useAgentStore } from "@/lib/agents/agentStore";
 import { computePositionProfit, STRATEGY_CONFIG } from "@/lib/strategy";
+import { fetchTicker } from "@/lib/binance";
 
 export default function Page() {
   // The shell owns the shared market-data instance so the top TickerTape and
@@ -23,11 +26,6 @@ export default function Page() {
   const [view, setView] = useState<ViewId>("trading");
 
   // --- Auth gate -------------------------------------------------------------
-  // The auth store uses `skipHydration: true` so the first client render
-  // matches the SSR HTML (default logged-out state). We then call
-  // `rehydrate()` in an effect — this synchronously reads localStorage and
-  // flips `_hasHydrated` to true, which triggers a single re-render with the
-  // persisted session (if any).
   const hasHydrated = useAuthStore((s) => s._hasHydrated);
   useEffect(() => {
     if (hasHydrated) return;
@@ -40,87 +38,42 @@ export default function Page() {
   // Handle the Deriv OAuth redirect (parses the URL hash on mount).
   useDerivCallback();
 
-  // --- Background simulation (runs on every view so shared data stays live) ---
-  // Sim clock: advance 1s every second. This drives timestamps on new events,
-  // the bot uptime timer, and the activity feed.
+  // --- Trade store: load history on auth ------------------------------------
+  const fetchTrades = useTradeStore((s) => s.fetchTrades);
   useEffect(() => {
-    const id = setInterval(() => {
-      useStore.getState().tickClock();
-    }, 1000);
-    return () => clearInterval(id);
-  }, []);
+    if (isAuthenticated && accountType) {
+      fetchTrades();
+    }
+  }, [isAuthenticated, accountType, fetchTrades]);
 
-  // Clear expired agent "Learning" badges shortly after their window ends.
+  // --- Agent stats sync: recompute winRate/pnl/sparkline from real trades ---
+  const trades = useTradeStore((s) => s.trades);
+  const syncAgentStats = useAgentStore((s) => s.syncStatsFromTrades);
+  useEffect(() => {
+    const agents = useAgentStore.getState().agents;
+    const map = new Map<
+      string,
+      { winRate: number; totalTrades: number; pnl: number; sparkline: number[] }
+    >();
+    for (const a of agents) {
+      map.set(a.id, computeAgentStats(trades, a.id));
+    }
+    syncAgentStats(map);
+  }, [trades, syncAgentStats]);
+
+  // --- Clear expired agent "Learning" badges --------------------------------
   useEffect(() => {
     const id = setInterval(() => {
-      useStore.getState().clearExpiredLearning();
+      useAgentStore.getState().clearExpiredLearning();
     }, 2000);
     return () => clearInterval(id);
   }, []);
 
-  // Agent simulation: every ~5s a random active agent executes a trade; if it
-  // was a loss, it immediately self-improves (pulses the Learning badge).
-  useEffect(() => {
-    const id = setInterval(() => {
-      useStore.getState().simulateAgentTick();
-    }, 5000);
-    return () => clearInterval(id);
-  }, []);
-
-  // Bot position price drift + stop-loss / take-profit automation: every 2s,
-  // drift current prices and auto-close any position that hit its SL or TP.
-  useEffect(() => {
-    const id = setInterval(() => {
-      const store = useStore.getState();
-      if (!store.bot.running) return;
-      store.driftBotPositions();
-      // Read the freshly-drifted positions and check SL/TP crossings.
-      const positions = useStore.getState().bot.positions;
-      positions.forEach((p) => {
-        if (p.side === "buy") {
-          if (p.currentPrice <= p.stopLoss) {
-            useStore.getState().closeBotPosition(p.id, p.stopLoss, "SL");
-          } else if (p.currentPrice >= p.takeProfit) {
-            useStore.getState().closeBotPosition(p.id, p.takeProfit, "TP");
-          }
-        } else {
-          if (p.currentPrice >= p.stopLoss) {
-            useStore.getState().closeBotPosition(p.id, p.stopLoss, "SL");
-          } else if (p.currentPrice <= p.takeProfit) {
-            useStore.getState().closeBotPosition(p.id, p.takeProfit, "TP");
-          }
-        }
-      });
-    }, 2000);
-    return () => clearInterval(id);
-  }, []);
-
-  // Bot order cycle: SIGNAL -> RISK-CHECK -> ORDER every 5-8s (randomized).
-  const botTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  useEffect(() => {
-    let cancelled = false;
-    const schedule = () => {
-      const delay = 5000 + Math.random() * 3000;
-      botTimerRef.current = setTimeout(() => {
-        if (cancelled) return;
-        useStore.getState().simulateBotTick();
-        schedule();
-      }, delay);
-    };
-    schedule();
-    return () => {
-      cancelled = true;
-      if (botTimerRef.current) clearTimeout(botTimerRef.current);
-    };
-  }, []);
-
-  // --- Drop Catcher take-profit automation -----------------------------------
+  // --- Take-profit automation for manual (TradePanel) positions -------------
   // For each open manual trade placed from the TradePanel, compute the live
   // profit using the active symbol's live price. When the profit reaches the
   // strategy take-profit target ($2.00), auto-close the position and log the
   // take-profit event to the bot activity feed.
-  // The activeSymbol and livePrice are tracked via refs so the interval can
-  // always read the freshest values without re-subscribing on every tick.
   const activeSymbolLabelRef = useRef<string>(market.activeSymbol.label);
   const livePriceRef = useRef<number>(market.livePrice);
   useEffect(() => {
@@ -132,11 +85,11 @@ export default function Page() {
 
   useEffect(() => {
     const id = setInterval(() => {
-      const store = useStore.getState();
+      const store = useTradeStore.getState();
+      const botStore = useBotStore.getState();
       const label = activeSymbolLabelRef.current;
       const livePrice = livePriceRef.current;
-      // Snapshot the open manual trades for the active symbol so we don't
-      // iterate a mutating collection while closing.
+      if (livePrice <= 0) return;
       const openManual = store.trades.filter(
         (t) =>
           t.status === "open" &&
@@ -154,21 +107,260 @@ export default function Page() {
         );
         if (profit >= STRATEGY_CONFIG.takeProfitTarget) {
           const pnlPct = Math.round((profit / t.amount) * 10000) / 100;
-          store.closeTrade(t.id, livePrice, profit, pnlPct, "win");
-          store.addBotLog(
+          void store.closeTrade(t.id, livePrice, profit, pnlPct, "win");
+          botStore.addBotLog(
             "TAKE-PROFIT",
             `TAKE-PROFIT: Closed ${t.market} position, profit $${profit.toFixed(2)}`,
           );
+          // Self-correction: every agent that voted (manual trade has no
+          // voting agents, but the consensus may have flagged a buy/sell). We
+          // only correct on consensus-driven trades, which are tagged with an
+          // agentId. Skip for pure manual trades.
         }
       }
     }, 1000);
     return () => clearInterval(id);
   }, []);
 
+  // --- Bot consensus automation: when the bot is running and a fresh
+  // consensus passes, open a position at the current live price. The agent
+  // store's runAnalysis runs from the TradePanel whenever fresh candles
+  // arrive; we read the latest consensus result here.
+  const viewRef = useRef<ViewId>(view);
+  useEffect(() => {
+    viewRef.current = view;
+  }, [view]);
+
+  useEffect(() => {
+    const id = setInterval(() => {
+      const botStore = useBotStore.getState();
+      if (!botStore.running) return;
+      const livePrice = livePriceRef.current;
+      const label = activeSymbolLabelRef.current;
+      if (livePrice <= 0) return;
+
+      const consensus = useAgentStore.getState().lastConsensus;
+      if (!consensus || !consensus.passed) return;
+      if (consensus.decision !== "buy" && consensus.decision !== "sell") return;
+
+      // Throttle: only place one trade per consensus timestamp.
+      const lastAnalyzedAt = useAgentStore.getState().lastAnalysisAt ?? 0;
+      const lastTradeAt = botStore.positions.length
+        ? Math.max(...botStore.positions.map((p) => p.openedAt))
+        : 0;
+      if (lastTradeAt >= lastAnalyzedAt) return;
+
+      const config = botStore.config;
+      if (botStore.positions.length >= config.maxConcurrentPositions) return;
+
+      // Daily loss guard.
+      const now = Date.now();
+      const dayStart = now - (now % 86_400_000);
+      const todayLoss = Math.abs(
+        useTradeStore
+          .getState()
+          .trades.filter(
+            (t) =>
+              t.status === "closed" &&
+              t.source === "bot" &&
+              t.datetime >= dayStart &&
+              t.pnl < 0,
+          )
+          .reduce((s, t) => s + t.pnl, 0),
+      );
+      if (todayLoss >= config.maxDailyLoss) {
+        botStore.addBotLog(
+          "RISK-CHECK",
+          `Daily loss limit $${config.maxDailyLoss} reached -- bot trade skipped`,
+        );
+        return;
+      }
+
+      const side = consensus.decision;
+      const positionSize = Math.min(
+        config.maxPositionSize,
+        Math.max(50, Math.round((5000 * config.riskPerTrade) / 100)),
+      );
+      const slPct = config.defaultStopLoss / 100;
+      const tpPct = config.defaultTakeProfit / 100;
+      const size = positionSize / livePrice;
+      const sl =
+        side === "buy" ? livePrice * (1 - slPct) : livePrice * (1 + slPct);
+      const tp =
+        side === "buy" ? livePrice * (1 + tpPct) : livePrice * (1 - tpPct);
+
+      const posId = `pos-${Date.now().toString(36)}-${Math.floor(Math.random() * 1e4).toString(36)}`;
+      const tradeId = `bot-${Date.now().toString(36)}-${Math.floor(Math.random() * 1e4).toString(36)}`;
+      const votingAgents = consensus.votes
+        .filter((v) => v.action === side)
+        .map((v) => v.agentId);
+
+      const trade = {
+        id: tradeId,
+        status: "open" as const,
+        datetime: now,
+        market: label,
+        side,
+        amount: positionSize,
+        entryPrice: livePrice,
+        exitPrice: null,
+        pnl: 0,
+        pnlPct: 0,
+        result: null,
+        agentId: votingAgents[0] ?? null,
+        source: "bot" as const,
+      };
+      void useTradeStore.getState().addTrade(trade);
+      botStore.openBotPosition(
+        {
+          id: posId,
+          tradeId,
+          symbol: label,
+          side,
+          size,
+          entryPrice: livePrice,
+          currentPrice: livePrice,
+          stopLoss: sl,
+          takeProfit: tp,
+          openedAt: now,
+          agentId: votingAgents[0] ?? null,
+        },
+        tradeId,
+      );
+      botStore.addBotLog(
+        "SIGNAL",
+        `Consensus ${side.toUpperCase()} ${label} @ ${livePrice} (${consensus.totalConfidence}% confidence, ${votingAgents.length} agents)`,
+      );
+      botStore.addBotLog(
+        "RISK-CHECK",
+        `Position $${positionSize}, SL ${config.defaultStopLoss}%, TP ${config.defaultTakeProfit}% -- APPROVED`,
+      );
+    }, 5000);
+    return () => clearInterval(id);
+  }, []);
+
+  // --- Bot position price refresh + SL/TP automation -----------------------
+  // For each open bot position, poll the live price from Binance (per symbol)
+  // and auto-close on SL/TP crossings.
+  useEffect(() => {
+    const id = setInterval(async () => {
+      const botStore = useBotStore.getState();
+      const tradeStore = useTradeStore.getState();
+      if (botStore.positions.length === 0) return;
+
+      // Group positions by symbol so we only fetch each ticker once.
+      const bySymbol = new Map<string, typeof botStore.positions>();
+      for (const p of botStore.positions) {
+        const list = bySymbol.get(p.symbol) ?? [];
+        list.push(p);
+        bySymbol.set(p.symbol, list);
+      }
+
+      for (const [symbolLabel, positions] of bySymbol) {
+        // Look up the Binance symbol id by label (e.g. "BTC/USDT" -> "BTCUSDT").
+        const sym = [...market.symbols].find((s) => s.label === symbolLabel);
+        if (!sym) continue;
+        let price = 0;
+        try {
+          const ticker = await fetchTicker(sym.id);
+          price = ticker.lastPrice;
+        } catch {
+          continue;
+        }
+        if (price <= 0) continue;
+
+        for (const p of positions) {
+          botStore.updatePositionPrice(p.id, price);
+          // Check SL/TP.
+          if (p.side === "buy") {
+            if (price <= p.stopLoss) {
+              const size = p.size;
+              const pnl = computePositionProfit("buy", p.entryPrice, p.stopLoss, size);
+              const pnlPct = Math.round((pnl / (p.entryPrice * size)) * 10000) / 100;
+              botStore.closeBotPosition(p.id, p.stopLoss, "SL");
+              void tradeStore.closeTrade(
+                p.tradeId,
+                p.stopLoss,
+                pnl,
+                pnlPct,
+                pnl >= 0 ? "win" : "loss",
+              );
+              // Self-correction on the agents that voted for this position.
+              if (p.agentId) {
+                useAgentStore.getState().correctAfterTrade(
+                  pnl >= 0 ? "win" : "loss",
+                  [p.agentId],
+                  pnl,
+                );
+              }
+            } else if (price >= p.takeProfit) {
+              const size = p.size;
+              const pnl = computePositionProfit("buy", p.entryPrice, p.takeProfit, size);
+              const pnlPct = Math.round((pnl / (p.entryPrice * size)) * 10000) / 100;
+              botStore.closeBotPosition(p.id, p.takeProfit, "TP");
+              void tradeStore.closeTrade(
+                p.tradeId,
+                p.takeProfit,
+                pnl,
+                pnlPct,
+                pnl >= 0 ? "win" : "loss",
+              );
+              if (p.agentId) {
+                useAgentStore.getState().correctAfterTrade(
+                  pnl >= 0 ? "win" : "loss",
+                  [p.agentId],
+                  pnl,
+                );
+              }
+            }
+          } else {
+            if (price >= p.stopLoss) {
+              const size = p.size;
+              const pnl = computePositionProfit("sell", p.entryPrice, p.stopLoss, size);
+              const pnlPct = Math.round((pnl / (p.entryPrice * size)) * 10000) / 100;
+              botStore.closeBotPosition(p.id, p.stopLoss, "SL");
+              void tradeStore.closeTrade(
+                p.tradeId,
+                p.stopLoss,
+                pnl,
+                pnlPct,
+                pnl >= 0 ? "win" : "loss",
+              );
+              if (p.agentId) {
+                useAgentStore.getState().correctAfterTrade(
+                  pnl >= 0 ? "win" : "loss",
+                  [p.agentId],
+                  pnl,
+                );
+              }
+            } else if (price <= p.takeProfit) {
+              const size = p.size;
+              const pnl = computePositionProfit("sell", p.entryPrice, p.takeProfit, size);
+              const pnlPct = Math.round((pnl / (p.entryPrice * size)) * 10000) / 100;
+              botStore.closeBotPosition(p.id, p.takeProfit, "TP");
+              void tradeStore.closeTrade(
+                p.tradeId,
+                p.takeProfit,
+                pnl,
+                pnlPct,
+                pnl >= 0 ? "win" : "loss",
+              );
+              if (p.agentId) {
+                useAgentStore.getState().correctAfterTrade(
+                  pnl >= 0 ? "win" : "loss",
+                  [p.agentId],
+                  pnl,
+                );
+              }
+            }
+          }
+        }
+      }
+    }, 5000);
+    return () => clearInterval(id);
+  }, [market.symbols]);
+
   // --- Render shell ----------------------------------------------------------
-  // TickerTape is always visible (above login / overlay / app) for polish.
-  // During SSR we render only the ticker so the auth gate (which depends on
-  // client-only localStorage) never leaks a one-frame flash of the app.
   return (
     <div className="flex min-h-screen flex-col bg-background">
       <TickerTape
@@ -179,8 +371,6 @@ export default function Page() {
       />
 
       {!hasHydrated ? (
-        // Reserve the layout during the very first client paint so the page
-        // does not jump when the auth gate resolves.
         <div className="flex-1" />
       ) : !isAuthenticated ? (
         <LoginView />
@@ -190,7 +380,6 @@ export default function Page() {
         <div className="flex flex-1">
           <Sidebar active={view} onSelect={setView} />
           <main className="min-w-0 flex-1">
-            {/* Keyed wrapper so each view switch replays the fade transition. */}
             <div key={view} className="animate-view-enter">
               {view === "trading" && <TradingView market={market} />}
               {view === "dashboard" && <DashboardView />}

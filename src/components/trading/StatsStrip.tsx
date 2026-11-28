@@ -7,7 +7,7 @@ import {
   formatCompact,
   formatPrice,
   priceDecimals,
-} from "./useMarketData";
+} from "@/lib/format";
 import type { Candle, SymbolInfo, TickerStats } from "./types";
 
 interface StatsStripProps {
@@ -137,7 +137,7 @@ export function StatsStrip({
               direction === "down" && "text-glow-bear",
             )}
           >
-            {formatPrice(stats.lastPrice, decimals)}
+            {stats.lastPrice > 0 ? formatPrice(stats.lastPrice, decimals) : "--"}
           </span>
           <Sparkline values={sparkValues} positive={up} />
         </div>
@@ -194,27 +194,15 @@ export function StatsStrip({
         </span>
       </StatCard>
 
-      {/* Market Cap or P/E */}
-      <StatCard
-        label={
-          symbol.kind === "crypto" ? "Market Cap" : "P/E Ratio"
-        }
-      >
+      {/* Open24h reference */}
+      <StatCard label="24h Open">
         <span className="font-mono text-base font-semibold tabular-nums">
-          {symbol.kind === "crypto"
-            ? stats.marketCap != null
-              ? `$${formatCompact(stats.marketCap)}`
-              : "--"
-            : stats.peRatio != null
-              ? stats.peRatio.toFixed(1)
-              : "--"}
+          {formatPrice(stats.open24h, decimals)}
         </span>
-        <span className="text-[11px] text-muted-foreground">
-          {symbol.kind === "crypto" ? "Fully diluted" : "Trailing 12m"}
-        </span>
+        <span className="text-[11px] text-muted-foreground">Binance spot</span>
       </StatCard>
 
-      {/* Bid / Ask quick stat */}
+      {/* Bid / Ask approximation (from last price) */}
       <StatCard label="Bid / Ask">
         <div className="flex flex-col">
           <span className="font-mono text-sm font-semibold text-[var(--bear)] tabular-nums">

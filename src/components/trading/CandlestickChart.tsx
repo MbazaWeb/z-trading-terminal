@@ -113,7 +113,7 @@ export function CandlestickChart({
   const volBottom = volTop + volH;
 
   const decimals = priceDecimals(
-    candles.length ? candles[candles.length - 1].close : symbol.basePrice,
+    candles.length ? candles[candles.length - 1].close : 1,
   );
 
   // Price range with padding.

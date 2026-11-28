@@ -1,6 +1,6 @@
 "use client";
 
-import { useSyncExternalStore } from "react";
+import { useSyncExternalStore, useMemo, useState } from "react";
 import {
   Activity,
   ChevronDown,
@@ -18,8 +18,11 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { formatPrice } from "./useMarketData";
+import { formatPrice } from "@/lib/format";
+import { getMarketStatus } from "@/lib/binance";
 import type { SymbolInfo } from "./types";
+
+type MarketFilter = "all" | "open" | "closed";
 
 interface HeaderProps {
   symbols: SymbolInfo[];
@@ -48,6 +51,31 @@ function useWallClock(): Date | null {
   return seconds === 0 ? null : new Date(seconds * 1000);
 }
 
+function FilterPill({
+  label,
+  active,
+  onClick,
+}: {
+  label: string;
+  active: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        "rounded-md px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider transition-colors",
+        active
+          ? "bg-[#1c2230] text-foreground"
+          : "text-muted-foreground hover:bg-[#11161f] hover:text-foreground",
+      )}
+    >
+      {label}
+    </button>
+  );
+}
+
 export function Header({
   symbols,
   activeSymbol,
@@ -55,6 +83,7 @@ export function Header({
   onSelectSymbol,
 }: HeaderProps) {
   const now = useWallClock();
+  const [filter, setFilter] = useState<MarketFilter>("all");
 
   const utcString =
     now == null
@@ -68,6 +97,30 @@ export function Header({
       ? ""
       : now.toUTCString().split(" ").slice(0, 4).join(" ");
 
+  // Pre-compute market status for every symbol so the dropdown can show the
+  // open / closed badge without re-computing per render.
+  const enriched = useMemo(
+    () =>
+      symbols.map((s) => {
+        const status = getMarketStatus(s);
+        return { symbol: s, status };
+      }),
+    [symbols],
+  );
+
+  const filtered = useMemo(() => {
+    if (filter === "open") return enriched.filter((e) => e.status.open);
+    if (filter === "closed") return enriched.filter((e) => !e.status.open);
+    return enriched;
+  }, [enriched, filter]);
+
+  const openCount = enriched.filter((e) => e.status.open).length;
+  const closedCount = enriched.length - openCount;
+  const marketBanner =
+    closedCount === 0
+      ? "All markets open"
+      : `${openCount} open / ${closedCount} closed`;
+
   return (
     <header className="sticky top-0 z-20 flex h-14 items-center justify-between gap-3 border-b border-[var(--panel-border)] bg-[#0a0e17]/95 px-3 backdrop-blur sm:px-4">
       {/* Left: Logo */}
@@ -80,7 +133,7 @@ export function Header({
             Z TERMINAL
           </span>
           <span className="text-[10px] font-medium tracking-wide text-muted-foreground">
-            MARKET DATA
+            LIVE MARKET DATA
           </span>
         </div>
         <span className="text-sm font-bold tracking-wider text-foreground sm:hidden">
@@ -110,14 +163,56 @@ export function Header({
           </DropdownMenuTrigger>
           <DropdownMenuContent
             align="center"
-            className="w-[280px] border-[var(--panel-border)] bg-[#0d1117] p-1"
+            className="w-[320px] border-[var(--panel-border)] bg-[#0d1117] p-1"
           >
             <DropdownMenuLabel className="px-2 py-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
               Select Market
             </DropdownMenuLabel>
             <DropdownMenuSeparator className="bg-[var(--panel-border)]" />
+
+            {/* Market status banner */}
+            <div className="flex items-center justify-between gap-2 px-2 py-1.5">
+              <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
+                <span className="relative flex size-2">
+                  <span className="absolute inline-flex size-full animate-live rounded-full bg-[var(--bull)]" />
+                  <span className="relative inline-flex size-2 rounded-full bg-[var(--bull)]" />
+                </span>
+                <span className="font-semibold uppercase tracking-wider text-[var(--bull)]">
+                  {marketBanner}
+                </span>
+              </div>
+              <span className="text-[10px] text-muted-foreground">
+                Crypto 24/7
+              </span>
+            </div>
+
+            {/* Filter pills */}
+            <div className="flex items-center gap-1 px-2 py-1.5">
+              <FilterPill
+                label="All"
+                active={filter === "all"}
+                onClick={() => setFilter("all")}
+              />
+              <FilterPill
+                label="Open"
+                active={filter === "open"}
+                onClick={() => setFilter("open")}
+              />
+              <FilterPill
+                label="Closed"
+                active={filter === "closed"}
+                onClick={() => setFilter("closed")}
+              />
+            </div>
+            <DropdownMenuSeparator className="bg-[var(--panel-border)]" />
+
             <div className="max-h-72 overflow-y-auto">
-              {symbols.map((s) => {
+              {filtered.length === 0 && (
+                <div className="px-2 py-4 text-center text-[11px] text-muted-foreground">
+                  No markets match this filter.
+                </div>
+              )}
+              {filtered.map(({ symbol: s, status }) => {
                 const isActive = s.id === activeSymbol.id;
                 return (
                   <DropdownMenuItem
@@ -129,16 +224,25 @@ export function Header({
                     )}
                   >
                     <div className="flex items-center gap-2">
+                      <span
+                        className={cn(
+                          "size-1.5 rounded-full",
+                          status.open
+                            ? "bg-[var(--bull)] shadow-[0_0_6px_rgba(22,199,132,0.8)]"
+                            : "bg-[var(--bear)]",
+                        )}
+                        aria-hidden="true"
+                      />
                       <span className="font-mono text-sm font-semibold">
                         {s.label}
                       </span>
                       <span className="text-[11px] text-muted-foreground">
-                        {s.kind === "crypto" ? "Crypto" : "Stock"}
+                        {s.name}
                       </span>
                     </div>
                     <div className="flex items-center gap-2">
-                      <span className="font-mono text-xs text-muted-foreground">
-                        {formatPrice(s.basePrice)}
+                      <span className="rounded bg-white/5 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">
+                        {status.label}
                       </span>
                       {isActive && (
                         <span className="size-1.5 rounded-full bg-[var(--bull)] shadow-[0_0_6px_rgba(22,199,132,0.8)]" />

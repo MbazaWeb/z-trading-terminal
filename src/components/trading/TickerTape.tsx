@@ -1,8 +1,10 @@
 "use client";
 
-import { useMemo } from "react";
-import { SYMBOLS, formatPrice } from "./useMarketData";
-import type { SymbolInfo } from "./types";
+import { useEffect, useMemo, useState } from "react";
+import { fetchAllTickers } from "@/lib/binance";
+import { SYMBOLS } from "./useMarketData";
+import { formatPrice } from "@/lib/format";
+import type { TickerStats } from "./types";
 import { cn } from "@/lib/utils";
 
 interface TickerTapeProps {
@@ -12,16 +14,12 @@ interface TickerTapeProps {
   onSelectSymbol: (id: string) => void;
 }
 
-// Deterministic pseudo change-percent for non-active symbols.
-function seededChange(symbol: SymbolInfo): number {
-  let h = 2166136261;
-  const s = symbol.id + "ticker";
-  for (let i = 0; i < s.length; i++) {
-    h ^= s.charCodeAt(i);
-    h = Math.imul(h, 16777619);
-  }
-  h >>>= 0;
-  return (h % 1200) / 100 - 6;
+interface TickerItem {
+  id: string;
+  label: string;
+  price: number;
+  change: number;
+  isActive: boolean;
 }
 
 export function TickerTape({
@@ -30,16 +28,50 @@ export function TickerTape({
   activeChangePercent,
   onSelectSymbol,
 }: TickerTapeProps) {
-  const items = useMemo(
-    () =>
-      SYMBOLS.map((s) => {
-        const isActive = s.id === activeSymbolId;
-        const change = isActive ? activeChangePercent : seededChange(s);
-        const price = isActive ? livePrice : s.basePrice * (1 + change / 100);
-        return { symbol: s, price, change, isActive };
-      }),
-    [activeSymbolId, livePrice, activeChangePercent],
-  );
+  const [allTickers, setAllTickers] = useState<Map<string, TickerStats>>(new Map());
+
+  // Poll all tickers every 10s. The Binance /ticker/24hr (all) endpoint is
+  // cached for 5s in the binance module so we round up to 10s here.
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      try {
+        const map = await fetchAllTickers();
+        if (!cancelled) setAllTickers(map);
+      } catch {
+        /* keep last known */
+      }
+    }
+    load();
+    const id = setInterval(load, 10_000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, []);
+
+  const items: TickerItem[] = useMemo(() => {
+    return SYMBOLS.map((s) => {
+      const isActive = s.id === activeSymbolId;
+      if (isActive) {
+        return {
+          id: s.id,
+          label: s.label,
+          price: livePrice,
+          change: activeChangePercent,
+          isActive,
+        };
+      }
+      const t = allTickers.get(s.id);
+      return {
+        id: s.id,
+        label: s.label,
+        price: t?.lastPrice ?? 0,
+        change: t?.changePercent ?? 0,
+        isActive,
+      };
+    });
+  }, [allTickers, activeSymbolId, livePrice, activeChangePercent]);
 
   // Duplicate the list so the marquee loops seamlessly (translateX -50%).
   const loop = [...items, ...items];
@@ -51,19 +83,19 @@ export function TickerTape({
           const up = item.change >= 0;
           return (
             <button
-              key={`${item.symbol.id}-${idx}`}
+              key={`${item.id}-${idx}`}
               type="button"
-              onClick={() => onSelectSymbol(item.symbol.id)}
+              onClick={() => onSelectSymbol(item.id)}
               className={cn(
                 "flex h-full items-center gap-2 border-r border-[var(--panel-border)] px-4 text-xs transition-colors hover:bg-[#11161f]",
                 item.isActive && "bg-[#0d1117]",
               )}
             >
               <span className="font-semibold text-foreground/90">
-                {item.symbol.label}
+                {item.label}
               </span>
               <span className="font-mono text-foreground/70">
-                {formatPrice(item.price)}
+                {item.price > 0 ? formatPrice(item.price) : "--"}
               </span>
               <span
                 className={cn(

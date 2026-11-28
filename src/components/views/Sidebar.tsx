@@ -249,6 +249,13 @@ function UserAccountSection({ collapsed }: { collapsed: boolean }) {
           </span>
         </div>
 
+        {/* Demo mode note */}
+        {isDemo && (
+          <p className="mb-2.5 rounded-md border border-[var(--bull)]/30 bg-[rgba(22,199,132,0.08)] px-2 py-1.5 text-[10px] leading-relaxed text-[var(--bull)]">
+            Demo mode — for training only. No real funds at risk.
+          </p>
+        )}
+
         {/* Logout */}
         <button
           type="button"

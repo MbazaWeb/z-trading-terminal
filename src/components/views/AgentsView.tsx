@@ -1,8 +1,18 @@
 "use client";
 
-import { memo, useMemo, useState } from "react";
+import { memo, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import { Plus, Sparkles, X } from "lucide-react";
+import {
+  BrainCircuit,
+  Crosshair,
+  MessageSquare,
+  Plus,
+  Radar,
+  RefreshCw,
+  Shuffle,
+  Sparkles,
+  X,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
@@ -23,13 +33,20 @@ import { cn } from "@/lib/utils";
 import {
   formatDateTime,
   formatMoney,
+  formatTime,
+} from "@/lib/format";
+import {
+  useAgentStore,
   useAgents,
-  useStore,
-  useTrades,
-  type AgentView,
-} from "@/lib/mockData";
+  useAgentSignals,
+  useLastConsensus,
+  useDiscussion,
+} from "@/lib/agents/agentStore";
+import { useTrades } from "@/lib/tradeStore";
+import type { AgentCore } from "@/lib/agents/types";
+import type { LucideIcon } from "lucide-react";
 
-// ---- Sparkline -------------------------------------------------------------
+// ---- Sparkline -----------------------------------------------------------
 
 function Sparkline({
   values,
@@ -74,9 +91,9 @@ function Sparkline({
   );
 }
 
-// ---- Status badge ----------------------------------------------------------
+// ---- Status badge --------------------------------------------------------
 
-function StatusBadge({ status }: { status: AgentView["status"] }) {
+function StatusBadge({ status }: { status: AgentCore["status"] }) {
   if (status === "active") {
     return (
       <span className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider bg-[var(--bull)]/15 text-[var(--bull)]">
@@ -98,8 +115,6 @@ function StatusBadge({ status }: { status: AgentView["status"] }) {
   );
 }
 
-// ---- Confidence bar --------------------------------------------------------
-
 function MiniBar({ value, max = 100, color }: { value: number; max?: number; color: string }) {
   const pct = Math.min(100, (value / max) * 100);
   return (
@@ -112,18 +127,30 @@ function MiniBar({ value, max = 100, color }: { value: number; max?: number; col
   );
 }
 
-// ---- Agent card ------------------------------------------------------------
+// ---- Agent card ----------------------------------------------------------
 
 function AgentCard({
   agent,
   onView,
 }: {
-  agent: AgentView;
+  agent: AgentCore;
   onView: (id: string) => void;
 }) {
-  const Icon = agent.icon;
-  const toggleStatus = useStore((s) => s.toggleAgentStatus);
-  const sparkPositive = agent.sparkline[agent.sparkline.length - 1] >= (agent.sparkline[0] ?? 0);
+  const Icon: LucideIcon = agent.icon;
+  const toggleStatus = useAgentStore((s) => s.toggleAgent);
+  const resetAgent = useAgentStore((s) => s.resetAgent);
+  const sparkPositive =
+    agent.sparkline.length > 1
+      ? agent.sparkline[agent.sparkline.length - 1] >= (agent.sparkline[0] ?? 0)
+      : true;
+  const lastSignal = agent.lastSignal;
+  const signalColor =
+    lastSignal?.action === "buy"
+      ? "#16c784"
+      : lastSignal?.action === "sell"
+        ? "#ea3943"
+        : "#8b949e";
+
   return (
     <div className="flex flex-col rounded-xl border border-[var(--panel-border)] bg-[#0d1117] p-4 animate-fade-in-up">
       {/* Header */}
@@ -146,6 +173,41 @@ function AgentCard({
         </div>
         <StatusBadge status={agent.status} />
       </div>
+
+      {/* Current signal */}
+      {lastSignal && (
+        <div className="mt-3 rounded-lg border border-[var(--panel-border)] bg-[#0a0e17] p-2.5">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+              Current Signal
+            </span>
+            <span
+              className="rounded px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider"
+              style={{
+                backgroundColor: `${signalColor}22`,
+                color: signalColor,
+              }}
+            >
+              {lastSignal.action.toUpperCase()} {lastSignal.confidence}%
+            </span>
+          </div>
+          <p className="mt-1.5 text-[11px] leading-relaxed text-foreground/85">
+            {lastSignal.reasoning}
+          </p>
+          {lastSignal.indicators.length > 0 && (
+            <div className="mt-1.5 flex flex-wrap gap-1">
+              {lastSignal.indicators.slice(0, 4).map((ind) => (
+                <span
+                  key={ind.name}
+                  className="rounded bg-white/5 px-1.5 py-0.5 font-mono text-[9px] tabular-nums text-muted-foreground"
+                >
+                  {ind.name}: {ind.value}
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Stats row */}
       <div className="mt-3 grid grid-cols-3 gap-2">
@@ -217,6 +279,17 @@ function AgentCard({
               {formatDateTime(agent.lastImprovement.timestamp)}
             </span>{" "}
             -- {agent.lastImprovement.parameterChange}
+            <span
+              className={cn(
+                "ml-1 font-mono",
+                agent.lastImprovement.confidenceDelta >= 0
+                  ? "text-[var(--bull)]"
+                  : "text-[var(--bear)]",
+              )}
+            >
+              ({agent.lastImprovement.confidenceDelta >= 0 ? "+" : ""}
+              {agent.lastImprovement.confidenceDelta}%)
+            </span>
           </p>
         )}
       </div>
@@ -225,10 +298,15 @@ function AgentCard({
       <div className="mt-3">
         <div className="mb-1 flex items-center justify-between">
           <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
-            Last 20 trades P&amp;L
+            Recent trades P&amp;L
           </span>
         </div>
-        <Sparkline values={agent.sparkline} positive={sparkPositive} width={280} height={36} />
+        <Sparkline
+          values={agent.sparkline.length > 1 ? agent.sparkline : [0, 0]}
+          positive={sparkPositive}
+          width={280}
+          height={36}
+        />
       </div>
 
       {/* Footer controls */}
@@ -243,20 +321,31 @@ function AgentCard({
             {agent.status === "active" ? "Running" : "Paused"}
           </span>
         </div>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => onView(agent.id)}
-          className="h-7 border-[var(--panel-border)] bg-[#0a0e17] px-3 text-[11px] font-semibold hover:bg-[#11161f]"
-        >
-          View Details
-        </Button>
+        <div className="flex items-center gap-1.5">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => resetAgent(agent.id)}
+            title="Reset agent to defaults"
+            className="h-7 px-2 text-[10px] font-semibold text-muted-foreground hover:bg-[#11161f] hover:text-foreground"
+          >
+            <RefreshCw className="size-3" />
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => onView(agent.id)}
+            className="h-7 border-[var(--panel-border)] bg-[#0a0e17] px-3 text-[11px] font-semibold hover:bg-[#11161f]"
+          >
+            View Details
+          </Button>
+        </div>
       </div>
     </div>
   );
 }
 
-// ---- Details drawer --------------------------------------------------------
+// ---- Details drawer ------------------------------------------------------
 
 function AgentDetailsDrawer({
   agentId,
@@ -356,13 +445,15 @@ function AgentDetailsDrawer({
               {/* Performance sparkline */}
               <div className="mt-3 rounded-lg border border-[var(--panel-border)] bg-[#0d1117] p-3">
                 <div className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-                  Cumulative performance (last 20)
+                  Cumulative performance
                 </div>
                 <Sparkline
-                  values={agent.sparkline}
+                  values={agent.sparkline.length > 1 ? agent.sparkline : [0, 0]}
                   positive={
-                    agent.sparkline[agent.sparkline.length - 1] >=
-                    (agent.sparkline[0] ?? 0)
+                    agent.sparkline.length > 1
+                      ? agent.sparkline[agent.sparkline.length - 1] >=
+                        (agent.sparkline[0] ?? 0)
+                      : true
                   }
                   width={460}
                   height={60}
@@ -382,7 +473,8 @@ function AgentDetailsDrawer({
                 <div className="max-h-64 overflow-y-auto p-2">
                   {agent.improvementLog.length === 0 && (
                     <div className="px-2 py-4 text-center text-xs text-muted-foreground">
-                      No improvements logged yet.
+                      No improvements logged yet. Agents self-correct after
+                      losing trades.
                     </div>
                   )}
                   {agent.improvementLog.map((entry) => (
@@ -394,8 +486,16 @@ function AgentDetailsDrawer({
                         <span className="font-mono text-[10px] text-muted-foreground tabular-nums">
                           {formatDateTime(entry.timestamp)}
                         </span>
-                        <span className="rounded bg-[#4f9cf9]/15 px-1.5 py-0.5 text-[10px] font-semibold text-[#4f9cf9]">
-                          +{entry.confidenceDelta}% conf
+                        <span
+                          className={cn(
+                            "rounded px-1.5 py-0.5 text-[10px] font-semibold",
+                            entry.confidenceDelta >= 0
+                              ? "bg-[var(--bull)]/15 text-[var(--bull)]"
+                              : "bg-[var(--bear)]/15 text-[var(--bear)]",
+                          )}
+                        >
+                          {entry.confidenceDelta >= 0 ? "+" : ""}
+                          {entry.confidenceDelta}% conf
                         </span>
                       </div>
                       <p className="mt-1 text-[11px] text-foreground/90">
@@ -467,9 +567,7 @@ function AgentDetailsDrawer({
                                   : "text-[var(--bear)]",
                             )}
                           >
-                            {t.status === "open"
-                              ? "--"
-                              : formatMoney(t.pnl)}
+                            {t.status === "open" ? "--" : formatMoney(t.pnl)}
                           </td>
                           <td className="px-2 py-1.5 text-right">
                             {t.status === "open" ? (
@@ -494,7 +592,7 @@ function AgentDetailsDrawer({
   );
 }
 
-// ---- Deploy modal ----------------------------------------------------------
+// ---- Deploy modal --------------------------------------------------------
 
 function DeployAgentModal({
   open,
@@ -509,8 +607,8 @@ function DeployAgentModal({
         <DialogHeader>
           <DialogTitle>Deploy New Agent</DialogTitle>
           <DialogDescription>
-            Configure a new self-improving trading agent. (Demo only -- no agent
-            is actually deployed.)
+            The terminal ships with 5 pre-configured agents. Custom agent
+            deployment is coming soon.
           </DialogDescription>
         </DialogHeader>
         <div className="flex flex-col gap-3">
@@ -532,19 +630,6 @@ function DeployAgentModal({
               className="border-[var(--panel-border)] bg-[#0a0e17] font-mono text-sm"
             />
           </label>
-          <label className="flex flex-col gap-1">
-            <span className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
-              Risk Level
-            </span>
-            <select
-              className="h-9 rounded-md border border-[var(--panel-border)] bg-[#0a0e17] px-2 text-sm text-foreground outline-none"
-              defaultValue="med"
-            >
-              <option value="low">Low</option>
-              <option value="med">Medium</option>
-              <option value="high">High</option>
-            </select>
-          </label>
         </div>
         <DialogFooter>
           <Button
@@ -557,8 +642,8 @@ function DeployAgentModal({
           <Button
             onClick={() => {
               onOpenChange(false);
-              toast.success("Agent deployment queued (demo)", {
-                description: "The new agent will appear once provisioning completes.",
+              toast.success("Agent deployment queued", {
+                description: "Custom agents are coming in a future release.",
               });
             }}
             className="bg-[var(--bull)] text-[#0a0e17] hover:bg-[var(--bull)]/90"
@@ -571,7 +656,216 @@ function DeployAgentModal({
   );
 }
 
-// ---- Strategies table ------------------------------------------------------
+// ---- Discussion + consensus panel ----------------------------------------
+
+function ConsensusPanel() {
+  const signals = useAgentSignals();
+  const consensus = useLastConsensus();
+  const discussion = useDiscussion();
+
+  const buyVotes = consensus?.votes.filter((v) => v.action === "buy") ?? [];
+  const sellVotes = consensus?.votes.filter((v) => v.action === "sell") ?? [];
+  const buyWeight = buyVotes.reduce((s, v) => s + v.weight, 0);
+  const sellWeight = sellVotes.reduce((s, v) => s + v.weight, 0);
+  const totalWeight = buyWeight + sellWeight || 1;
+  const buyPct = Math.round((buyWeight / totalWeight) * 100);
+  const sellPct = 100 - buyPct;
+  const decision = consensus?.decision ?? "hold";
+
+  return (
+    <div className="grid grid-cols-1 gap-3 lg:grid-cols-[1.4fr_1fr]">
+      {/* Signals grid */}
+      <div className="rounded-xl border border-[var(--panel-border)] bg-[#0d1117] p-4 animate-fade-in-up">
+        <div className="mb-3 flex items-center justify-between">
+          <h2 className="text-xs font-semibold uppercase tracking-wider text-foreground">
+            Current Signals
+          </h2>
+          <span className="text-[10px] text-muted-foreground">
+            {signals.length} agents reporting
+          </span>
+        </div>
+        {signals.length === 0 ? (
+          <div className="flex h-32 items-center justify-center text-xs text-muted-foreground">
+            Open the Trading view to run agent analysis on live market data.
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+            {signals.map((sig) => {
+              const color =
+                sig.action === "buy"
+                  ? "#16c784"
+                  : sig.action === "sell"
+                    ? "#ea3943"
+                    : "#8b949e";
+              return (
+                <div
+                  key={sig.agentId}
+                  className="rounded-md border border-[var(--panel-border)] bg-[#0a0e17] p-2.5"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="truncate text-[11px] font-semibold text-foreground">
+                      {sig.agentName}
+                    </span>
+                    <span
+                      className="shrink-0 rounded px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider"
+                      style={{ backgroundColor: `${color}22`, color }}
+                    >
+                      {sig.action.toUpperCase()}
+                    </span>
+                  </div>
+                  <div className="mt-1 flex items-center gap-2">
+                    <div className="h-1 flex-1 overflow-hidden rounded-full bg-white/5">
+                      <div
+                        className="h-full rounded-full"
+                        style={{
+                          width: `${Math.min(100, sig.confidence)}%`,
+                          backgroundColor: color,
+                        }}
+                      />
+                    </div>
+                    <span className="font-mono text-[10px] tabular-nums text-muted-foreground">
+                      {sig.confidence}%
+                    </span>
+                  </div>
+                  <p className="mt-1 text-[10px] leading-relaxed text-muted-foreground">
+                    {sig.reasoning}
+                  </p>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* Consensus + discussion */}
+      <div className="flex flex-col gap-3">
+        {/* Consensus verdict */}
+        <div className="rounded-xl border border-[var(--panel-border)] bg-[#0d1117] p-4 animate-fade-in-up">
+          <h2 className="mb-3 text-xs font-semibold uppercase tracking-wider text-foreground">
+            Consensus Result
+          </h2>
+          {!consensus ? (
+            <p className="text-xs text-muted-foreground">
+              No consensus yet — run analysis from the Trading view.
+            </p>
+          ) : (
+            <div>
+              <div className="flex items-center justify-between gap-2">
+                <span
+                  className={cn(
+                    "rounded px-2 py-1 text-xs font-bold uppercase tracking-wider",
+                    decision === "buy"
+                      ? "bg-[rgba(22,199,132,0.18)] text-[var(--bull)]"
+                      : decision === "sell"
+                        ? "bg-[rgba(234,57,67,0.18)] text-[var(--bear)]"
+                        : "bg-white/5 text-muted-foreground",
+                  )}
+                >
+                  {decision.toUpperCase()}
+                </span>
+                <span
+                  className={cn(
+                    "rounded px-2 py-1 text-[10px] font-bold uppercase tracking-wider",
+                    consensus.passed
+                      ? "bg-[var(--bull)]/15 text-[var(--bull)]"
+                      : "bg-white/5 text-muted-foreground",
+                  )}
+                >
+                  {consensus.passed ? "PASSED" : "WAITING"}
+                </span>
+              </div>
+              <div className="mt-2 flex items-center justify-between text-[11px]">
+                <span className="text-muted-foreground">Confidence</span>
+                <span className="font-mono font-semibold tabular-nums text-foreground">
+                  {consensus.totalConfidence}% / {consensus.threshold}%
+                </span>
+              </div>
+              <div className="mt-1 flex h-1.5 overflow-hidden rounded-full bg-white/5">
+                <div
+                  className="h-full bg-[var(--bull)]"
+                  style={{ width: `${buyPct}%` }}
+                />
+                <div
+                  className="h-full bg-[var(--bear)]"
+                  style={{ width: `${sellPct}%` }}
+                />
+              </div>
+              <div className="mt-1 flex justify-between text-[10px]">
+                <span className="text-[var(--bull)]">BUY {buyPct}%</span>
+                <span className="text-[var(--bear)]">SELL {sellPct}%</span>
+              </div>
+              <p className="mt-2 text-[10px] leading-relaxed text-muted-foreground">
+                {consensus.reason}
+              </p>
+            </div>
+          )}
+        </div>
+
+        {/* Discussion thread */}
+        <div className="rounded-xl border border-[var(--panel-border)] bg-[#0d1117] p-4 animate-fade-in-up">
+          <div className="mb-3 flex items-center gap-2">
+            <MessageSquare className="size-3.5 text-[#4f9cf9]" />
+            <h2 className="text-xs font-semibold uppercase tracking-wider text-foreground">
+              Agent Discussion
+            </h2>
+          </div>
+          <div className="max-h-72 overflow-y-auto pr-1">
+            {discussion.length === 0 ? (
+              <p className="text-xs text-muted-foreground">
+                No messages yet — agents discuss after each analysis round.
+              </p>
+            ) : (
+              <div className="flex flex-col gap-2">
+                {discussion.map((m) => (
+                  <div
+                    key={m.id}
+                    className="rounded-md border border-[var(--panel-border)] bg-[#0a0e17] px-2.5 py-1.5"
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[10px] font-semibold text-foreground">
+                        {m.fromAgentName}{" "}
+                        <span className="text-muted-foreground">
+                          {"-> "}
+                          {m.toAgentName === "All" ? "All" : m.toAgentName}
+                        </span>
+                      </span>
+                      <span
+                        className={cn(
+                          "rounded px-1 py-0.5 text-[9px] font-bold uppercase tracking-wider",
+                          m.agreement
+                            ? "bg-[var(--bull)]/15 text-[var(--bull)]"
+                            : "bg-[var(--bear)]/15 text-[var(--bear)]",
+                        )}
+                      >
+                        {m.agreement ? "Agree" : "Disagree"}
+                      </span>
+                    </div>
+                    <p className="mt-1 text-[11px] leading-relaxed text-foreground/85">
+                      {m.message}
+                    </p>
+                    <span className="mt-0.5 block font-mono text-[9px] text-muted-foreground tabular-nums">
+                      {formatTime(m.timestamp)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---- Main view -----------------------------------------------------------
+
+const STRATEGY_ICON_MAP: Record<string, LucideIcon> = {
+  Momentum: Radar,
+  Reversion: RefreshCw,
+  Sentiment: BrainCircuit,
+  Breakout: Crosshair,
+  Arbitrage: Shuffle,
+};
 
 interface StrategyRow {
   id: string;
@@ -583,15 +877,6 @@ interface StrategyRow {
   winRate: number;
   status: "Active" | "Archived";
 }
-
-const STRATEGIES: StrategyRow[] = [
-  { id: "s1", name: "Trend Following v3", type: "Momentum", risk: "Med", agent: "Momentum Hunter", pnl24h: 84.2, winRate: 64, status: "Active" },
-  { id: "s2", name: "Mean Reversion v2", type: "Reversion", risk: "Low", agent: "Mean Reverter", pnl24h: -22.5, winRate: 58, status: "Active" },
-  { id: "s3", name: "Sentiment Pulse", type: "Sentiment", risk: "High", agent: "Sentiment Scalper", pnl24h: 142.8, winRate: 71, status: "Active" },
-  { id: "s4", name: "Breakout Hunter", type: "Breakout", risk: "Med", agent: "Breakout Sniper", pnl24h: 38.6, winRate: 62, status: "Active" },
-  { id: "s5", name: "Stat Arb Pairs", type: "Arbitrage", risk: "Low", agent: "Arbitrage Detector", pnl24h: 96.4, winRate: 77, status: "Active" },
-  { id: "s6", name: "Grid Bot Legacy", type: "Grid", risk: "Low", agent: "--", pnl24h: 12.0, winRate: 55, status: "Archived" },
-];
 
 function RiskBadge({ risk }: { risk: StrategyRow["risk"] }) {
   const cls =
@@ -607,12 +892,46 @@ function RiskBadge({ risk }: { risk: StrategyRow["risk"] }) {
   );
 }
 
-// ---- Main view -------------------------------------------------------------
-
 export const AgentsView = memo(function AgentsView() {
   const agents = useAgents();
+  const trades = useTrades();
   const [selected, setSelected] = useState<string | null>(null);
   const [deployOpen, setDeployOpen] = useState(false);
+
+  // Build the strategies table from live agents (mirrors the historical
+  // strategy list with real numbers).
+  const strategies: StrategyRow[] = useMemo(() => {
+    const now = Date.now();
+    const dayStart = now - (now % 86_400_000);
+    return agents.map((a) => {
+      const agentTrades = trades.filter(
+        (t) =>
+          t.agentId === a.id &&
+          t.status === "closed" &&
+          t.datetime >= dayStart,
+      );
+      const pnl24h = agentTrades.reduce((s, t) => s + t.pnl, 0);
+      const wins = agentTrades.filter((t) => t.result === "win").length;
+      const winRate =
+        agentTrades.length > 0 ? (wins / agentTrades.length) * 100 : 0;
+      const risk: StrategyRow["risk"] =
+        a.strategyType === "Arbitrage" || a.strategyType === "Reversion"
+          ? "Low"
+          : a.strategyType === "Sentiment"
+            ? "High"
+            : "Med";
+      return {
+        id: a.id,
+        name: a.strategy,
+        type: a.strategyType,
+        risk,
+        agent: a.name,
+        pnl24h: Math.round(pnl24h * 100) / 100,
+        winRate: Math.round(winRate * 10) / 10,
+        status: a.status === "active" ? "Active" : "Archived",
+      };
+    });
+  }, [agents, trades]);
 
   return (
     <div className="mx-auto w-full max-w-[1600px] px-3 py-4 sm:px-5 sm:py-6">
@@ -622,7 +941,7 @@ export const AgentsView = memo(function AgentsView() {
             Agents &amp; Strategies
           </h1>
           <p className="mt-0.5 text-xs text-muted-foreground">
-            Self-improving trading agents with live iteration logs.
+            Self-improving trading agents voting on live Binance market data.
           </p>
         </div>
         <Button
@@ -633,8 +952,11 @@ export const AgentsView = memo(function AgentsView() {
         </Button>
       </header>
 
+      {/* Consensus + signals + discussion */}
+      <ConsensusPanel />
+
       {/* Agent roster */}
-      <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+      <div className="mt-6 grid grid-cols-1 gap-3 lg:grid-cols-2">
         {agents.map((a) => (
           <AgentCard key={a.id} agent={a} onView={setSelected} />
         ))}
@@ -660,46 +982,52 @@ export const AgentsView = memo(function AgentsView() {
                 </tr>
               </thead>
               <tbody>
-                {STRATEGIES.map((s) => (
-                  <tr
-                    key={s.id}
-                    className="border-b border-[var(--panel-border)]/50 hover:bg-[#11161f]"
-                  >
-                    <td className="px-3 py-2 font-medium text-foreground">
-                      {s.name}
-                    </td>
-                    <td className="px-3 py-2 text-muted-foreground">{s.type}</td>
-                    <td className="px-3 py-2">
-                      <RiskBadge risk={s.risk} />
-                    </td>
-                    <td className="px-3 py-2 text-muted-foreground">
-                      {s.agent}
-                    </td>
-                    <td
-                      className={cn(
-                        "px-3 py-2 text-right font-mono tabular-nums",
-                        s.pnl24h >= 0 ? "text-[var(--bull)]" : "text-[var(--bear)]",
-                      )}
+                {strategies.map((s) => {
+                  const Icon = STRATEGY_ICON_MAP[s.type] ?? Radar;
+                  return (
+                    <tr
+                      key={s.id}
+                      className="border-b border-[var(--panel-border)]/50 hover:bg-[#11161f]"
                     >
-                      {formatMoney(s.pnl24h)}
-                    </td>
-                    <td className="px-3 py-2 text-right font-mono tabular-nums text-foreground">
-                      {s.winRate}%
-                    </td>
-                    <td className="px-3 py-2 text-right">
-                      <span
+                      <td className="px-3 py-2 font-medium text-foreground">
+                        <span className="inline-flex items-center gap-2">
+                          <Icon className="size-3.5 text-muted-foreground" />
+                          {s.name}
+                        </span>
+                      </td>
+                      <td className="px-3 py-2 text-muted-foreground">{s.type}</td>
+                      <td className="px-3 py-2">
+                        <RiskBadge risk={s.risk} />
+                      </td>
+                      <td className="px-3 py-2 text-muted-foreground">
+                        {s.agent}
+                      </td>
+                      <td
                         className={cn(
-                          "inline-flex rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider",
-                          s.status === "Active"
-                            ? "bg-[var(--bull)]/15 text-[var(--bull)]"
-                            : "bg-white/5 text-muted-foreground",
+                          "px-3 py-2 text-right font-mono tabular-nums",
+                          s.pnl24h >= 0 ? "text-[var(--bull)]" : "text-[var(--bear)]",
                         )}
                       >
-                        {s.status}
-                      </span>
-                    </td>
-                  </tr>
-                ))}
+                        {formatMoney(s.pnl24h)}
+                      </td>
+                      <td className="px-3 py-2 text-right font-mono tabular-nums text-foreground">
+                        {s.winRate.toFixed(1)}%
+                      </td>
+                      <td className="px-3 py-2 text-right">
+                        <span
+                          className={cn(
+                            "inline-flex rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider",
+                            s.status === "Active"
+                              ? "bg-[var(--bull)]/15 text-[var(--bull)]"
+                              : "bg-white/5 text-muted-foreground",
+                          )}
+                        >
+                          {s.status}
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>

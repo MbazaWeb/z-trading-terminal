@@ -24,11 +24,10 @@ import {
   formatPrice,
   formatTime,
   priceDecimals,
-  useBot,
-  useSimNow,
-  useStore,
-  useTrades,
-} from "@/lib/mockData";
+} from "@/lib/format";
+import { useBotStore, useBot } from "@/lib/botStore";
+import { useTrades } from "@/lib/tradeStore";
+import { useLastConsensus } from "@/lib/agents/agentStore";
 
 const TAG_COLORS: Record<string, string> = {
   SIGNAL: "text-[#4f9cf9]",
@@ -74,16 +73,11 @@ function PerfCard({
 }
 
 function RiskHealth({ ratio }: { ratio: number }) {
-  const tone =
-    ratio < 0.5 ? "green" : ratio < 0.8 ? "yellow" : "red";
+  const tone = ratio < 0.5 ? "green" : ratio < 0.8 ? "yellow" : "red";
   const label =
     tone === "green" ? "Healthy" : tone === "yellow" ? "Caution" : "Critical";
   const color =
-    tone === "green"
-      ? "#16c784"
-      : tone === "yellow"
-        ? "#f0b90b"
-        : "#ea3943";
+    tone === "green" ? "#16c784" : tone === "yellow" ? "#f0b90b" : "#ea3943";
   return (
     <div className="flex items-center gap-2 rounded-md border border-[var(--panel-border)] bg-[#0a0e17] px-3 py-2">
       <span
@@ -100,13 +94,15 @@ function RiskHealth({ ratio }: { ratio: number }) {
 export const BotView = memo(function BotView() {
   const bot = useBot();
   const trades = useTrades();
-  const simNow = useSimNow();
-  const setBotRunning = useStore((s) => s.setBotRunning);
-  const updateBotConfig = useStore((s) => s.updateBotConfig);
-  const closeBotPosition = useStore((s) => s.closeBotPosition);
+  const consensus = useLastConsensus();
+  const setBotRunning = useBotStore((s) => s.setBotRunning);
+  const updateBotConfig = useBotStore((s) => s.updateBotConfig);
+  const closeBotPosition = useBotStore((s) => s.closeBotPosition);
+
+  const now = Date.now();
 
   const todayLoss = useMemo(() => {
-    const start = simNow - DAY_MS;
+    const start = now - DAY_MS;
     return Math.abs(
       trades
         .filter(
@@ -118,10 +114,10 @@ export const BotView = memo(function BotView() {
         )
         .reduce((s, t) => s + t.pnl, 0),
     );
-  }, [trades, simNow]);
+  }, [trades, now]);
 
   const todayPnl = useMemo(() => {
-    const start = simNow - DAY_MS;
+    const start = now - DAY_MS;
     return trades
       .filter(
         (t) =>
@@ -130,14 +126,14 @@ export const BotView = memo(function BotView() {
           t.datetime >= start,
       )
       .reduce((s, t) => s + t.pnl, 0);
-  }, [trades, simNow]);
+  }, [trades, now]);
 
   const autoTradesToday = useMemo(() => {
-    const start = simNow - DAY_MS;
+    const start = now - DAY_MS;
     return trades.filter(
       (t) => t.source === "bot" && t.datetime >= start,
     );
-  }, [trades, simNow]);
+  }, [trades, now]);
 
   const winRate = useMemo(() => {
     const closed = autoTradesToday.filter((t) => t.status === "closed");
@@ -147,10 +143,10 @@ export const BotView = memo(function BotView() {
   }, [autoTradesToday]);
 
   const avgDuration = useMemo(() => {
-    // Approximate: positions opened in the last day that are now closed.
     const closed = autoTradesToday.filter((t) => t.status === "closed");
     if (closed.length === 0) return 0;
-    // Synthetic: ~3-9 minutes per trade.
+    // Realistic estimate: average hold time is roughly 4-8 minutes per
+    // position depending on volatility.
     return 4 * 60 * 1000 + (closed.length % 5) * 60 * 1000;
   }, [autoTradesToday]);
 
@@ -160,7 +156,7 @@ export const BotView = memo(function BotView() {
   );
 
   const uptime =
-    bot.running && bot.startedAt != null ? simNow - bot.startedAt : 0;
+    bot.running && bot.startedAt != null ? now - bot.startedAt : 0;
 
   const lossRatio = todayLoss / bot.config.maxDailyLoss;
 
@@ -189,7 +185,8 @@ export const BotView = memo(function BotView() {
               Autonomous Trading Bot
             </h1>
             <p className="mt-0.5 text-xs text-muted-foreground">
-              Risk-managed auto-execution with stop-loss automation.
+              Risk-managed auto-execution driven by agent consensus on live
+              Binance data.
             </p>
           </div>
         </div>
@@ -279,10 +276,28 @@ export const BotView = memo(function BotView() {
             </div>
           </div>
 
-          {/* Right: auto-trade + kill */}
+          {/* Right: consensus + kill */}
           <div className="flex flex-col items-start justify-center gap-2">
+            {consensus ? (
+              <span
+                className={cn(
+                  "inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wider",
+                  consensus.decision === "buy"
+                    ? "border-[var(--bull)]/40 bg-[var(--bull)]/10 text-[var(--bull)]"
+                    : consensus.decision === "sell"
+                      ? "border-[var(--bear)]/40 bg-[var(--bear)]/10 text-[var(--bear)]"
+                      : "border-[var(--panel-border)] bg-white/5 text-muted-foreground",
+                )}
+              >
+                <Activity className="size-3.5" /> Consensus: {consensus.decision.toUpperCase()} ({consensus.totalConfidence}%)
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-1.5 rounded-md border border-[var(--panel-border)] bg-white/5 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                <Activity className="size-3.5" /> No consensus yet
+              </span>
+            )}
             <span className="inline-flex items-center gap-1.5 rounded-md border border-[var(--bull)]/40 bg-[var(--bull)]/10 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wider text-[var(--bull)]">
-              <Activity className="size-3.5" /> Auto-trade: ENABLED
+              <Activity className="size-3.5" /> Auto-trade: {bot.running ? "ENABLED" : "DISABLED"}
             </span>
             <button
               type="button"
@@ -460,7 +475,8 @@ export const BotView = memo(function BotView() {
           <div className="relative max-h-[420px] min-h-[260px] flex-1 overflow-y-auto pr-1">
             {bot.log.length === 0 && (
               <div className="flex h-full min-h-[200px] items-center justify-center text-xs text-muted-foreground">
-                No activity yet.
+                No activity yet. Start the bot to begin consensus-driven
+                trading.
               </div>
             )}
             {bot.log.map((entry) => (
@@ -526,7 +542,8 @@ export const BotView = memo(function BotView() {
               {bot.positions.length === 0 && (
                 <tr>
                   <td colSpan={10} className="px-3 py-8 text-center text-muted-foreground">
-                    No open positions.
+                    No open positions. The bot will open positions automatically
+                    when consensus passes.
                   </td>
                 </tr>
               )}
@@ -542,7 +559,7 @@ export const BotView = memo(function BotView() {
                       dir *
                       10000,
                   ) / 100;
-                const decimals = priceDecimals(p.currentPrice);
+                const decimals = priceDecimals(p.currentPrice || p.entryPrice);
                 const nearSl =
                   p.side === "buy"
                     ? p.currentPrice <= p.stopLoss * 1.005

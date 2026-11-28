@@ -87,13 +87,13 @@ export function AccountTypeSelect() {
         </div>
 
         <div className="grid gap-4 sm:grid-cols-2">
-          <ChoiceCard type="demo" onSelect={setAccountType} />
           <ChoiceCard type="real" onSelect={setAccountType} />
+          <ChoiceCard type="demo" onSelect={setAccountType} />
         </div>
 
         <p className="mt-6 text-center text-[11px] text-muted-foreground">
-          Demo accounts use virtual funds. Real accounts require verified funds
-          in your broker account.
+          Real account is recommended. Demo accounts use virtual funds and are
+          intended for training.
         </p>
       </div>
     </div>

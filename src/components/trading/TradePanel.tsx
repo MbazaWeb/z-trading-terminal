@@ -5,32 +5,41 @@ import { toast } from "sonner";
 import { RefreshCw } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
-import { formatPrice, priceDecimals } from "./useMarketData";
-import type { SymbolInfo } from "./types";
-import { useStore } from "@/lib/mockData";
+import { formatPrice, priceDecimals } from "@/lib/format";
+import type { Candle, SymbolInfo, TickerStats } from "./types";
+import { useTradeStore, newTradeId } from "@/lib/tradeStore";
+import { useBotStore } from "@/lib/botStore";
+import {
+  useAgentStore,
+  useLastConsensus,
+  useAgentSignals,
+} from "@/lib/agents/agentStore";
 import { useAuthStore } from "@/lib/authStore";
 import {
   STRATEGY_CONFIG,
   analyzeEntry,
+  computePositionProfit,
   type StrategyAnalysis,
 } from "@/lib/strategy";
+import type { AgentSignal, ConsensusResult } from "@/lib/agents/types";
 
 interface TradePanelProps {
   symbol: SymbolInfo;
   livePrice: number;
+  candles: Candle[];
+  stats: TickerStats;
 }
 
 const FAKE_BALANCE_QUOTE = 50_000;
 
 // Reference risk config mirrors the bot config; the TradePanel uses the live
-// bot config from the store so strategy risk reflects whatever the user has
-// configured on the Bot view.
+// bot config so strategy risk reflects whatever the user has configured.
 function useRiskConfig(accountBalance: number) {
-  const botConfig = useStore((s) => s.bot.config);
-  const trades = useStore((s) => s.trades);
-  const simNow = useStore((s) => s.simNow);
+  const botConfig = useBotStore((s) => s.config);
+  const trades = useTradeStore((s) => s.trades);
   const currentDailyLoss = useMemo(() => {
-    const dayStart = simNow - (simNow % 86_400_000);
+    const now = Date.now();
+    const dayStart = now - (now % 86_400_000);
     return Math.abs(
       trades
         .filter(
@@ -42,7 +51,7 @@ function useRiskConfig(accountBalance: number) {
         )
         .reduce((sum, t) => sum + t.pnl, 0),
     );
-  }, [trades, simNow]);
+  }, [trades]);
   return {
     maxPositionSize: botConfig.maxPositionSize,
     maxDailyLoss: botConfig.maxDailyLoss,
@@ -54,7 +63,7 @@ function useRiskConfig(accountBalance: number) {
   };
 }
 
-export function TradePanel({ symbol, livePrice }: TradePanelProps) {
+export function TradePanel({ symbol, livePrice, candles, stats }: TradePanelProps) {
   const [side, setSide] = useState<"buy" | "sell">("buy");
   const [priceInput, setPriceInput] = useState(() =>
     livePrice.toFixed(priceDecimals(livePrice)),
@@ -64,27 +73,18 @@ export function TradePanel({ symbol, livePrice }: TradePanelProps) {
 
   const decimals = priceDecimals(livePrice);
 
-  // Pull strategy state + actions from the shared store.
-  const strategy = useStore((s) => s.strategy);
-  const setStrategyReference = useStore((s) => s.setStrategyReference);
-  const resetStrategySession = useStore((s) => s.resetStrategySession);
-  const setLastAnalysis = useStore((s) => s.setLastAnalysis);
-  const addTrade = useStore((s) => s.addTrade);
-  const addBotLog = useStore((s) => s.addBotLog);
-  const simNow = useStore((s) => s.simNow);
+  // Stores
+  const addTrade = useTradeStore((s) => s.addTrade);
+  const addBotLog = useBotStore((s) => s.addBotLog);
+  const agents = useAgentStore((s) => s.agents);
+  const signals = useAgentSignals();
+  const consensus = useLastConsensus();
+  const runAnalysis = useAgentStore((s) => s.runAnalysis);
 
   // Account balance from auth store so strategy risk uses the real balance.
   const accountInfo = useAuthStore((s) => s.accountInfo);
   const accountBalance = accountInfo?.balance ?? FAKE_BALANCE_QUOTE;
   const riskConfig = useRiskConfig(accountBalance);
-
-  // When the Trading view mounts (or whenever the reference price is null),
-  // start the strategy session at the current live price.
-  useEffect(() => {
-    if (strategy.referencePrice == null) {
-      setStrategyReference(livePrice);
-    }
-  }, [strategy.referencePrice, setStrategyReference, livePrice]);
 
   // Reset the price field to the live price when the symbol changes, using
   // the React "adjust state during render" pattern (no effect needed).
@@ -96,6 +96,14 @@ export function TradePanel({ symbol, livePrice }: TradePanelProps) {
     setAnalysis(null);
   }
 
+  // Run the agent analysis whenever fresh candles arrive (debounced by the
+  // candle update cadence from useMarketData — typically every 5s on the
+  // ticker poll).
+  useEffect(() => {
+    if (candles.length === 0 || stats.lastPrice === 0) return;
+    runAnalysis(candles, stats);
+  }, [candles, stats.lastPrice, runAnalysis]);
+
   const price = parseFloat(priceInput) || 0;
   const amount = parseFloat(amountInput) || 0;
   const total = useMemo(() => price * amount, [price, amount]);
@@ -104,26 +112,19 @@ export function TradePanel({ symbol, livePrice }: TradePanelProps) {
   const sideColor = isBuy ? "var(--bull)" : "var(--bear)";
 
   function handlePercent(pct: number) {
-    const quoteToSpend = FAKE_BALANCE_QUOTE * pct;
+    const quoteToSpend = accountBalance * pct;
     if (price <= 0) {
       toast.error("Enter a price first");
       return;
     }
     const amt = quoteToSpend / price;
-    setAmountInput(amt.toFixed(symbol.basePrice >= 1 ? 4 : 6));
+    setAmountInput(amt.toFixed(symbol.kind === "crypto" ? 4 : 4));
   }
 
-  // Reference price is the strategy session open. Fall back to the live price
-  // if the session has not started yet so the analysis never crashes.
-  const referencePrice = strategy.referencePrice ?? livePrice;
-
-  // Clicking Buy/Sell does NOT place a trade. It runs the strategy analysis
-  // and shows the result in the panel below. The user must then click the
-  // "Trade Now" button to actually place the trade (only when conditions met).
   function handleAnalyze() {
     const result = analyzeEntry(
       side,
-      referencePrice,
+      livePrice, // reference = current live price (drop catcher session open)
       livePrice,
       accountBalance,
       {
@@ -136,7 +137,6 @@ export function TradePanel({ symbol, livePrice }: TradePanelProps) {
       },
     );
     setAnalysis(result);
-    setLastAnalysis(result);
     if (result.conditionsMet) {
       toast.success(`Strategy analysis: ${side.toUpperCase()} conditions MET`, {
         description: `${result.entrySignal}. Potential profit +$${result.potentialProfit.toFixed(
@@ -160,11 +160,9 @@ export function TradePanel({ symbol, livePrice }: TradePanelProps) {
       return;
     }
     const trade = {
-      id: `manual-${Date.now().toString(36)}-${Math.floor(
-        Math.random() * 1e6,
-      ).toString(36)}`,
+      id: newTradeId("manual"),
       status: "open" as const,
-      datetime: simNow,
+      datetime: Date.now(),
       market: symbol.label,
       side,
       amount,
@@ -190,16 +188,28 @@ export function TradePanel({ symbol, livePrice }: TradePanelProps) {
     )}`, {
       description: `TP target: +$${STRATEGY_CONFIG.takeProfitTarget.toFixed(2)}`,
     });
-    // Clear the analysis so the user has to re-analyze for the next trade.
     setAnalysis(null);
   }
 
   function handleResetStrategy() {
-    resetStrategySession();
-    setStrategyReference(livePrice);
     setAnalysis(null);
     toast.success("Strategy session reset", {
       description: `Reference price set to ${formatPrice(livePrice, decimals)}`,
+    });
+  }
+
+  function handleRunAgentAnalysis() {
+    if (candles.length === 0) {
+      toast.error("No candles loaded yet");
+      return;
+    }
+    const result = runAnalysis(candles, stats);
+    if (!result) {
+      toast.error("Agent analysis failed");
+      return;
+    }
+    toast.success(`Consensus: ${result.decision.toUpperCase()} (${result.totalConfidence}%)`, {
+      description: result.reason,
     });
   }
 
@@ -210,7 +220,7 @@ export function TradePanel({ symbol, livePrice }: TradePanelProps) {
           Trade
         </h2>
         <span className="text-[11px] text-muted-foreground">
-          Drop Catcher
+          Drop Catcher + Consensus
         </span>
       </div>
 
@@ -341,10 +351,24 @@ export function TradePanel({ symbol, livePrice }: TradePanelProps) {
             onResetStrategy={handleResetStrategy}
           />
         )}
+
+        {/* Agent consensus panel */}
+        <AgentConsensusPanel
+          signals={signals}
+          consensus={consensus}
+          agentCount={agents.length}
+          onRunAnalysis={handleRunAgentAnalysis}
+          onTradeNow={handleTradeNow}
+          canTrade={!!analysis && analysis.conditionsMet && analysis.riskCheck.passed}
+          side={side}
+          symbolLabel={symbol.label}
+        />
       </div>
     </section>
   );
 }
+
+// ---- Strategy analysis panel (unchanged from task 4) -----------------------
 
 function AnalysisPanel({
   analysis,
@@ -489,6 +513,210 @@ function AnalysisPanel({
   );
 }
 
+// ---- Agent consensus panel -------------------------------------------------
+
+function AgentConsensusPanel({
+  signals,
+  consensus,
+  agentCount,
+  onRunAnalysis,
+  onTradeNow,
+  canTrade,
+  side,
+  symbolLabel,
+}: {
+  signals: AgentSignal[];
+  consensus: ConsensusResult | null;
+  agentCount: number;
+  onRunAnalysis: () => void;
+  onTradeNow: () => void;
+  canTrade: boolean;
+  side: "buy" | "sell";
+  symbolLabel: string;
+}) {
+  const buyVotes = consensus?.votes.filter((v) => v.action === "buy") ?? [];
+  const sellVotes = consensus?.votes.filter((v) => v.action === "sell") ?? [];
+  const buyWeight = buyVotes.reduce((s, v) => s + v.weight, 0);
+  const sellWeight = sellVotes.reduce((s, v) => s + v.weight, 0);
+  const totalWeight = buyWeight + sellWeight || 1;
+  const buyPct = Math.round((buyWeight / totalWeight) * 100);
+  const sellPct = 100 - buyPct;
+
+  const decision = consensus?.decision ?? "hold";
+  const passed = consensus?.passed ?? false;
+
+  return (
+    <div className="mt-1 rounded-md border border-[var(--panel-border)] bg-[#0a0e17] p-2.5">
+      {/* Header */}
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+          Agent Consensus
+        </span>
+        <button
+          type="button"
+          onClick={onRunAnalysis}
+          className="rounded border border-[var(--panel-border)] bg-[#0d1117] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground transition-colors hover:bg-[#11161f] hover:text-foreground"
+        >
+          Run Analysis
+        </button>
+      </div>
+
+      {/* Per-agent signals */}
+      <div className="flex flex-col gap-1">
+        {signals.length === 0 && (
+          <p className="text-[10px] text-muted-foreground">
+            No signals yet — click Run Analysis.
+          </p>
+        )}
+        {signals.map((sig) => (
+          <SignalRow key={sig.agentId} sig={sig} />
+        ))}
+      </div>
+
+      {/* Consensus verdict */}
+      {consensus && (
+        <div className="mt-2 rounded border border-[var(--panel-border)] bg-[#0d1117] p-2">
+          <div className="flex items-center justify-between gap-2">
+            <span
+              className={cn(
+                "rounded px-1.5 py-0.5 text-[11px] font-bold uppercase tracking-wider",
+                decision === "buy"
+                  ? "bg-[rgba(22,199,132,0.18)] text-[var(--bull)]"
+                  : decision === "sell"
+                    ? "bg-[rgba(234,57,67,0.18)] text-[var(--bear)]"
+                    : "bg-white/5 text-muted-foreground",
+              )}
+            >
+              Consensus: {decision.toUpperCase()}
+            </span>
+            <span className="font-mono text-[11px] tabular-nums text-muted-foreground">
+              {consensus.totalConfidence}% / {consensus.threshold}% threshold
+            </span>
+          </div>
+
+          {/* Vote breakdown bar */}
+          <div className="mt-1.5 flex h-1.5 w-full overflow-hidden rounded-full bg-white/5">
+            <div
+              className="h-full bg-[var(--bull)]"
+              style={{ width: `${buyPct}%` }}
+              aria-label={`Buy votes ${buyPct}%`}
+            />
+            <div
+              className="h-full bg-[var(--bear)]"
+              style={{ width: `${sellPct}%` }}
+              aria-label={`Sell votes ${sellPct}%`}
+            />
+          </div>
+          <div className="mt-1 flex items-center justify-between text-[10px]">
+            <span className="text-[var(--bull)]">BUY {buyPct}%</span>
+            <span className="text-[var(--bear)]">SELL {sellPct}%</span>
+          </div>
+
+          <p className="mt-1.5 text-[10px] leading-relaxed text-muted-foreground">
+            {consensus.reason}
+          </p>
+
+          {passed ? (
+            <button
+              type="button"
+              onClick={onTradeNow}
+              disabled={!canTrade}
+              className={cn(
+                "mt-2 w-full rounded-md py-2 text-[11px] font-bold uppercase tracking-wider transition-all",
+                canTrade
+                  ? side === "buy"
+                    ? "bg-[var(--bull)] text-[#0a0e17] shadow-[0_0_12px_rgba(22,199,132,0.4)] hover:brightness-110"
+                    : "bg-[var(--bear)] text-white shadow-[0_0_12px_rgba(234,57,67,0.4)] hover:brightness-110"
+                  : "cursor-not-allowed bg-white/5 text-muted-foreground",
+              )}
+            >
+              Trade Now via Consensus {side.toUpperCase()} {symbolLabel.split("/")[0]}
+            </button>
+          ) : (
+            <p className="mt-2 rounded border border-[var(--panel-border)] bg-[#0a0e17] px-2 py-1.5 text-[10px] text-muted-foreground">
+              Waiting for stronger consensus (threshold {consensus.threshold}%).
+            </p>
+          )}
+        </div>
+      )}
+
+      <p className="mt-1.5 text-[10px] text-muted-foreground">
+        {agentCount} agents voting on live Binance data
+      </p>
+    </div>
+  );
+}
+
+function SignalRow({ sig }: { sig: AgentSignal }) {
+  const color =
+    sig.action === "buy"
+      ? "var(--bull)"
+      : sig.action === "sell"
+        ? "var(--bear)"
+        : "var(--muted-foreground)";
+  return (
+    <div className="rounded border border-[var(--panel-border)] bg-[#0d1117] px-2 py-1.5">
+      <div className="flex items-center justify-between gap-2">
+        <span className="truncate text-[11px] font-semibold text-foreground">
+          {sig.agentName}
+        </span>
+        <span
+          className="shrink-0 rounded px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider"
+          style={{
+            backgroundColor:
+              sig.action === "buy"
+                ? "rgba(22,199,132,0.18)"
+                : sig.action === "sell"
+                  ? "rgba(234,57,67,0.18)"
+                  : "rgba(255,255,255,0.05)",
+            color: color === "var(--muted-foreground)" ? "#8b949e" : undefined,
+          }}
+        >
+          {sig.action === "buy"
+            ? "BUY"
+            : sig.action === "sell"
+              ? "SELL"
+              : "HOLD"}
+        </span>
+      </div>
+      <div className="mt-1 flex items-center gap-2">
+        <div className="h-1 flex-1 overflow-hidden rounded-full bg-white/5">
+          <div
+            className="h-full rounded-full"
+            style={{
+              width: `${Math.min(100, sig.confidence)}%`,
+              backgroundColor:
+                sig.action === "buy"
+                  ? "#16c784"
+                  : sig.action === "sell"
+                    ? "#ea3943"
+                    : "#8b949e",
+            }}
+          />
+        </div>
+        <span className="font-mono text-[10px] tabular-nums text-muted-foreground">
+          {sig.confidence}%
+        </span>
+      </div>
+      <p className="mt-1 text-[10px] leading-relaxed text-muted-foreground">
+        {sig.reasoning}
+      </p>
+      {sig.indicators.length > 0 && (
+        <div className="mt-1 flex flex-wrap gap-1">
+          {sig.indicators.slice(0, 4).map((ind) => (
+            <span
+              key={ind.name}
+              className="rounded bg-white/5 px-1.5 py-0.5 font-mono text-[9px] tabular-nums text-muted-foreground"
+            >
+              {ind.name}: {ind.value}
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function MetricRow({
   label,
   value,
@@ -516,3 +744,7 @@ function MetricRow({
     </div>
   );
 }
+
+// Re-export computePositionProfit so the shell can import it from the trade
+// panel module if needed (kept here for back-compat with task 4 imports).
+export { computePositionProfit };

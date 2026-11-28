@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useMemo, useState } from "react";
+import { memo, useEffect, useMemo, useState } from "react";
 import {
   ArrowDown,
   ArrowLeftRight,
@@ -18,27 +18,26 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import {
-  DEMO_NOW,
+  DAY_MS,
   formatDateTime,
   formatMoney,
   formatPrice,
   priceDecimals,
-  useTrades,
-  type Trade,
-} from "@/lib/mockData";
+} from "@/lib/format";
+import { useTrades, useTradeStore } from "@/lib/tradeStore";
+import type { Trade } from "@/lib/tradeStore";
 
 type Range = "today" | "7d" | "30d" | "all";
 type Filter = "all" | "open" | "closed" | "wins" | "losses";
 type SortKey = "datetime" | "market" | "amount" | "entryPrice" | "exitPrice" | "pnl" | "pnlPct";
 
-const DAY_MS = 86_400_000;
-
-function startOfDemoDay(): number {
-  return DEMO_NOW - (DEMO_NOW % DAY_MS);
+function startOfDay(): number {
+  const now = Date.now();
+  return now - (now % DAY_MS);
 }
 
 function rangeFilter(range: Range): (t: Trade) => boolean {
-  const todayStart = startOfDemoDay();
+  const todayStart = startOfDay();
   switch (range) {
     case "today":
       return (t) => t.datetime >= todayStart;
@@ -53,7 +52,7 @@ function rangeFilter(range: Range): (t: Trade) => boolean {
 }
 
 function previousRangeFilter(range: Range): (t: Trade) => boolean {
-  const todayStart = startOfDemoDay();
+  const todayStart = startOfDay();
   switch (range) {
     case "today":
       return (t) => t.datetime >= todayStart - DAY_MS && t.datetime < todayStart;
@@ -197,7 +196,7 @@ function CumulativePnlChart({ trades }: { trades: Trade[] }) {
 
   const series = useMemo(() => {
     const byDay = new Map<number, number>();
-    const todayStart = startOfDemoDay();
+    const todayStart = startOfDay();
     trades
       .filter((t) => t.status === "closed")
       .forEach((t) => {
@@ -271,7 +270,6 @@ function CumulativePnlChart({ trades }: { trades: Trade[] }) {
               <stop offset="100%" stopColor={lineColor} stopOpacity="0" />
             </linearGradient>
           </defs>
-          {/* gridlines */}
           {[0, 0.25, 0.5, 0.75, 1].map((p) => (
             <line
               key={p}
@@ -283,7 +281,6 @@ function CumulativePnlChart({ trades }: { trades: Trade[] }) {
               strokeDasharray="2 4"
             />
           ))}
-          {/* y labels */}
           {[0, 0.5, 1].map((p) => {
             const v = maxCum - p * range;
             return (
@@ -300,7 +297,6 @@ function CumulativePnlChart({ trades }: { trades: Trade[] }) {
               </text>
             );
           })}
-          {/* zero line */}
           {minCum < 0 && (
             <line
               x1={padL}
@@ -322,7 +318,6 @@ function CumulativePnlChart({ trades }: { trades: Trade[] }) {
               strokeLinecap="round"
             />
           )}
-          {/* points + hover */}
           {series.map((s, i) => (
             <g key={i}>
               <circle
@@ -531,9 +526,6 @@ function TradeLogsTable({ trades }: { trades: Trade[] }) {
       out = out.filter((t) => t.market.toLowerCase().includes(q));
     }
     out.sort((a, b) => {
-      // Trade[sortKey] can be `string | number | null` (exitPrice is nullable
-      // for open trades). We treat null as -Infinity so open trades sort last
-      // when ascending and first when descending, matching user expectation.
       let av: string | number | null = a[sortKey];
       let bv: string | number | null = b[sortKey];
       if (sortKey === "exitPrice") {
@@ -681,7 +673,9 @@ function TradeLogsTable({ trades }: { trades: Trade[] }) {
                   colSpan={10}
                   className="px-3 py-8 text-center text-muted-foreground"
                 >
-                  No trades match the current filters.
+                  {trades.length === 0
+                    ? "No trades yet. Start trading to see your stats."
+                    : "No trades match the current filters."}
                 </td>
               </tr>
             )}
@@ -809,16 +803,23 @@ function TradeLogsTable({ trades }: { trades: Trade[] }) {
 // ---- Main view -------------------------------------------------------------
 
 export const DashboardView = memo(function DashboardView() {
-  const allTrades = useTrades();
+  const trades = useTrades();
+  const fetchTrades = useTradeStore((s) => s.fetchTrades);
+  const loading = useTradeStore((s) => s.loading);
   const [range, setRange] = useState<Range>("today");
 
+  // Load trades from Supabase (if configured) on mount.
+  useEffect(() => {
+    fetchTrades();
+  }, [fetchTrades]);
+
   const inRange = useMemo(
-    () => allTrades.filter(rangeFilter(range)),
-    [allTrades, range],
+    () => trades.filter(rangeFilter(range)),
+    [trades, range],
   );
   const prevRange = useMemo(
-    () => allTrades.filter(previousRangeFilter(range)),
-    [allTrades, range],
+    () => trades.filter(previousRangeFilter(range)),
+    [trades, range],
   );
 
   const stats = useMemo(() => {
@@ -899,71 +900,87 @@ export const DashboardView = memo(function DashboardView() {
         </div>
       </header>
 
-      {/* Stats cards */}
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
-        <StatCard
-          label="Today's Trades"
-          value={String(stats.todayCount)}
-          icon={ArrowLeftRight}
-          delta={delta(stats.todayCount, stats.prevTodayCount)}
-        />
-        <StatCard
-          label="Win Trades"
-          value={String(stats.winCount)}
-          icon={TrendingUp}
-          tone="bull"
-          delta={delta(stats.winCount, stats.prevWinCount)}
-        />
-        <StatCard
-          label="Lose Trades"
-          value={String(stats.loseCount)}
-          icon={TrendingDown}
-          tone="bear"
-          delta={delta(stats.loseCount, stats.prevLoseCount)}
-        />
-        <StatCard
-          label="Total Closed"
-          value={String(stats.total)}
-          icon={List}
-          delta={delta(stats.total, stats.prevTotal)}
-        />
-        <StatCard
-          label="Amount Win"
-          value={formatMoney(stats.amountWin)}
-          icon={DollarSign}
-          tone="bull"
-        />
-        <StatCard
-          label="Amount Loss"
-          value={formatMoney(stats.amountLoss)}
-          icon={MinusCircle}
-          tone="bear"
-        />
-        <RingProgress
-          percent={stats.winRate}
-          color="#16c784"
-          label="Win Rate"
-        />
-        <RingProgress
-          percent={stats.loseRate}
-          color="#ea3943"
-          label="Lose Rate"
-        />
-      </div>
+      {/* Empty state for new accounts */}
+      {trades.length === 0 && !loading ? (
+        <div className="rounded-xl border border-[var(--panel-border)] bg-[#0d1117] p-12 text-center animate-fade-in-up">
+          <ArrowLeftRight className="mx-auto size-10 text-muted-foreground" />
+          <h2 className="mt-4 text-lg font-semibold text-foreground">
+            No trades yet
+          </h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Open the Trading view to place your first trade. Trades are
+            recorded locally and synced to Supabase when configured.
+          </p>
+        </div>
+      ) : (
+        <>
+          {/* Stats cards */}
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+            <StatCard
+              label="Today's Trades"
+              value={String(stats.todayCount)}
+              icon={ArrowLeftRight}
+              delta={delta(stats.todayCount, stats.prevTodayCount)}
+            />
+            <StatCard
+              label="Win Trades"
+              value={String(stats.winCount)}
+              icon={TrendingUp}
+              tone="bull"
+              delta={delta(stats.winCount, stats.prevWinCount)}
+            />
+            <StatCard
+              label="Lose Trades"
+              value={String(stats.loseCount)}
+              icon={TrendingDown}
+              tone="bear"
+              delta={delta(stats.loseCount, stats.prevLoseCount)}
+            />
+            <StatCard
+              label="Total Closed"
+              value={String(stats.total)}
+              icon={List}
+              delta={delta(stats.total, stats.prevTotal)}
+            />
+            <StatCard
+              label="Amount Win"
+              value={formatMoney(stats.amountWin)}
+              icon={DollarSign}
+              tone="bull"
+            />
+            <StatCard
+              label="Amount Loss"
+              value={formatMoney(stats.amountLoss)}
+              icon={MinusCircle}
+              tone="bear"
+            />
+            <RingProgress
+              percent={stats.winRate}
+              color="#16c784"
+              label="Win Rate"
+            />
+            <RingProgress
+              percent={stats.loseRate}
+              color="#ea3943"
+              label="Lose Rate"
+            />
+          </div>
 
-      {/* Charts row */}
-      <div className="mt-4 grid grid-cols-1 gap-3 lg:grid-cols-[1.6fr_1fr]">
-        <CumulativePnlChart trades={inRange} />
-        <WinLossDonut wins={stats.winCount} losses={stats.loseCount} />
-      </div>
+          {/* Charts row */}
+          <div className="mt-4 grid grid-cols-1 gap-3 lg:grid-cols-[1.6fr_1fr]">
+            <CumulativePnlChart trades={inRange} />
+            <WinLossDonut wins={stats.winCount} losses={stats.loseCount} />
+          </div>
 
-      {/* Trade logs */}
-      <div className="mt-4">
-        <h2 className="mb-2 text-sm font-semibold uppercase tracking-wider text-foreground">
-          Trade Logs
-        </h2>
-        <TradeLogsTable trades={inRange} />
-      </div>
+          {/* Trade logs */}
+          <div className="mt-4">
+            <h2 className="mb-2 text-sm font-semibold uppercase tracking-wider text-foreground">
+              Trade Logs
+            </h2>
+            <TradeLogsTable trades={inRange} />
+          </div>
+        </>
+      )}
     </div>
   );
 });
