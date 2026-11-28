@@ -27,7 +27,7 @@ export interface BridgePosition {
 }
 
 export async function bridgeRequest<T>(
-  path: "/account" | "/positions" | "/health" | "/market" | "/risk-specs" | "/account-risk" | "/order-check",
+  path: "/verified-account" | "/account" | "/positions" | "/health" | "/market" | "/risk-specs" | "/account-risk" | "/order-check",
   symbol?: string,
   order?: {symbol:string;side:"buy"|"sell";volume:number;stopLoss:number;takeProfit:number}
 ): Promise<T> {
@@ -152,4 +152,21 @@ export async function checkBridgeOrder(order: {symbol:string;side:"buy"|"sell";v
  }).parse(await bridgeRequest<unknown>("/order-check",undefined,order));
  const now=Date.now();if(r.observedAt>now||now-r.observedAt>10000)throw new Error("Expired broker check");
  return r;
+}
+
+
+export async function getVerifiedBridgeAccount() {
+  const { z } = await import("zod");
+  const finite = z.number().finite();
+  const account = z.object({
+    login: z.string().min(1), server: z.string().min(1),
+    accountType: z.enum(["demo", "real"]), currency: z.string().min(1),
+    balance: finite, equity: finite, freeMargin: finite,
+    tradeAllowed: z.boolean(), executable: z.literal(false)
+  }).parse(await bridgeRequest<unknown>("/verified-account"));
+  if (account.login !== process.env.MT5_LOGIN?.trim() ||
+      account.server !== process.env.MT5_SERVER?.trim()) {
+    throw new Error("MT5 broker identity mismatch");
+  }
+  return account;
 }
