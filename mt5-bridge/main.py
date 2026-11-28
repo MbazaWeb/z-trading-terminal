@@ -337,3 +337,48 @@ def risk_specs(symbol: str):
                 "login": str(account.login), "server": account.server,
                 "minStopDistance": info.trade_stops_level * info.point,
                 "observedAt": int(time.time() * 1000), "accountType": "demo"}
+
+@app.get("/account-risk", dependencies=[Depends(authenticate)])
+def account_risk():
+    from datetime import datetime, timezone
+    with broker() as account:
+        now = datetime.now(timezone.utc)
+        start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        deals = mt5.history_deals_get(start, now)
+        positions = mt5.positions_get()
+        orders = mt5.orders_get()
+        if deals is None or positions is None or orders is None:
+            raise HTTPException(503, "Account risk history unavailable")
+        if orders:
+            raise HTTPException(409, "Pending orders require risk reconciliation")
+        pnl = 0.0
+        for deal in deals:
+            if deal.type in (mt5.DEAL_TYPE_BUY, mt5.DEAL_TYPE_SELL):
+                pnl += deal.profit + deal.commission + deal.swap + deal.fee
+            elif deal.type not in (mt5.DEAL_TYPE_BALANCE, mt5.DEAL_TYPE_CREDIT):
+                raise HTTPException(503, "Unclassified account transaction")
+        exposure = 0.0
+        for p in positions:
+            tick = mt5.symbol_info_tick(p.symbol)
+            if tick is None or not 0 <= time.time()-tick.time <= 10 or not math.isfinite(p.sl) or p.sl <= 0:
+                raise HTTPException(503, "Unprotected position or stale quote")
+            if p.type not in (mt5.POSITION_TYPE_BUY, mt5.POSITION_TYPE_SELL):
+                raise HTTPException(503, "Unsupported position")
+            buy = p.type == mt5.POSITION_TYPE_BUY
+            price = tick.bid if buy else tick.ask
+            if not math.isfinite(price) or price <= 0 or (buy and p.sl >= price) or (not buy and p.sl <= price):
+                raise HTTPException(503, "Invalid position protection")
+            loss = mt5.order_calc_profit(mt5.ORDER_TYPE_BUY if buy else mt5.ORDER_TYPE_SELL,
+                                         p.symbol, p.volume, price, p.sl)
+            if loss is None or not math.isfinite(loss) or loss >= 0:
+                raise HTTPException(503, "Position risk unavailable")
+            exposure += -loss
+        if not all(math.isfinite(v) for v in (pnl, exposure, account.equity, account.margin_free)):
+            raise HTTPException(503, "Invalid account risk")
+        return {"login": str(account.login), "server": account.server,
+                "currency": account.currency, "accountType": "demo",
+                "equity": account.equity, "freeMargin": account.margin_free,
+                "dailyRealizedPnl": pnl, "openRisk": exposure,
+                "openPositions": len(positions), "pendingOrders": len(orders),
+                "dayStart": start.isoformat(), "observedAt": int(now.timestamp()*1000),
+                "executable": False}
