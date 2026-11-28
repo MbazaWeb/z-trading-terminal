@@ -226,6 +226,18 @@ export const useAuthStore = create<AuthState>()(
         ) {
           next.balance = info.balance;
         }
+        // Skip the state update if nothing actually changed. This prevents
+        // unnecessary re-renders and breaks potential infinite loops where a
+        // useEffect calls refreshBalance which calls updateAccountInfo.
+        if (
+          next.balance === info.balance &&
+          next.currency === info.currency &&
+          next.loginid === info.loginid &&
+          next.email === info.email &&
+          next.name === info.name
+        ) {
+          return;
+        }
         set({ accountInfo: next });
       },
 

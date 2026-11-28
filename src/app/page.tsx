@@ -60,7 +60,9 @@ export default function Page() {
       void refreshBalance();
     }, 30_000);
     return () => clearInterval(id);
-  }, [isAuthenticated, accountType, provider, accessToken, refreshBalance]);
+    // refreshBalance is a stable Zustand action — excluded from deps to
+    // prevent potential re-render loops.
+  }, [isAuthenticated, accountType, provider, accessToken]);
 
   // --- Trade store: load history on auth ------------------------------------
   const fetchTrades = useTradeStore((s) => s.fetchTrades);

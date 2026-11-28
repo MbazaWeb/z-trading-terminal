@@ -147,17 +147,14 @@ function UserAccountSection({ collapsed }: { collapsed: boolean }) {
   // Trigger a balance refresh whenever the open-trade count changes (e.g.
   // the bot closed a position, or the user placed a manual trade). This is
   // a no-op on demo accounts (refreshBalance returns early for demo).
+  // NOTE: accountInfo and refreshBalance are intentionally excluded from
+  // the dependency array. Including accountInfo would cause an infinite loop:
+  // refreshBalance -> updateAccountInfo -> new accountInfo ref -> effect reruns.
+  // We only need to refresh when the trade count or account type changes.
   useEffect(() => {
     if (!accountInfo) return;
     void refreshBalance();
-  }, [
-    openTradeCount,
-    lastTradeAt,
-    accountType,
-    provider,
-    accountInfo,
-    refreshBalance,
-  ]);
+  }, [openTradeCount, lastTradeAt, accountType, provider]);
 
   const [refreshing, setRefreshing] = useState(false);
   const handleManualRefresh = async () => {
