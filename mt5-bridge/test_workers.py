@@ -5,6 +5,7 @@ import threading
 import sqlite3
 import json
 from pathlib import Path
+from contextlib import closing
 from bot_scheduler import Bot
 from maintenance_worker import MaintenanceWorker
 
@@ -54,8 +55,7 @@ class WorkerTests(unittest.TestCase):
     def worker(self,collect):
         w=MaintenanceWorker(self.path,"demo",collect)
         def cleanup():
-            w.stop.set()
-            w.thread.join(3)
+            w.shutdown()
         self.addCleanup(cleanup)
         return w
     def test_deal_dedup(self):
@@ -69,6 +69,7 @@ class WorkerTests(unittest.TestCase):
     def test_stale_snapshot(self):
         w=self.worker(lambda:({},[]))
         self.wait(lambda:w.status()["state"]=="healthy")
-        with sqlite3.connect(self.path) as db:
+        with closing(sqlite3.connect(self.path)) as db:
             db.execute("UPDATE worker_snapshot SET payload=?",(json.dumps({"state":"healthy","checkedAt":time.time()-121}),))
+            db.commit()
         self.assertEqual(w.status()["state"],"stale")

@@ -35,7 +35,6 @@ export default function Page() {
   }, [hasHydrated]);
 
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
-  useEffect(()=>{if(isAuthenticated)setShowLogin(false);},[isAuthenticated]);
   const accountType = useAuthStore((s) => s.accountType);
   const provider = useAuthStore((s) => s.provider);
   const market = useMarketData("", hasHydrated && (!isAuthenticated || provider === "metatrader"));

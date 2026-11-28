@@ -8,7 +8,7 @@ export function BotDashboard({symbols}:{symbols:{id:string}[]}){
  const [error,setError]=useState("");
  const [busy,setBusy]=useState(false);
  async function refresh(){try{const r=await fetch("/api/account/mt5/bot",{cache:"no-store"});const d=await r.json();if(!r.ok)throw Error(d.error);setStatus(d);}catch{setStatus(null);}}
- useEffect(()=>{let active=true;async function poll(){try{const r=await fetch("/api/account/mt5/worker",{cache:"no-store"});const d=await r.json();if(active)setWorker(r.ok?d:null);}catch{if(active)setWorker(null);}}void refresh();void poll();const id=setInterval(()=>{void refresh();void poll();},5000);return()=>{active=false;clearInterval(id);};},[]);
+ useEffect(()=>{let active=true;async function poll(){try{const r=await fetch("/api/account/mt5/worker",{cache:"no-store"});const d=await r.json();if(active)setWorker(r.ok?d:null);}catch{if(active)setWorker(null);}}const initialRefresh=window.setTimeout(()=>{void refresh();void poll();},0);const id=setInterval(()=>{void refresh();void poll();},5000);return()=>{active=false;window.clearTimeout(initialRefresh);clearInterval(id);};},[]);
  async function control(action:string){
  if(action==="start"&&!window.confirm("Start automated demo orders on selected markets?"))return;
  setBusy(true);setError("");

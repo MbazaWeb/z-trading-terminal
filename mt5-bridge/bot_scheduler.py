@@ -4,6 +4,7 @@ import time
 import sqlite3
 import json
 from collections import deque
+from contextlib import closing
 
 class Bot:
     def __init__(self, execute, path, account_key):
@@ -19,9 +20,10 @@ class Bot:
         self.started=None
         self.heartbeat=time.time()
         self.events=deque(maxlen=100)
-        with sqlite3.connect(path) as db:
+        with closing(sqlite3.connect(path)) as db:
             db.execute("CREATE TABLE IF NOT EXISTS bot_audit (seq INTEGER PRIMARY KEY, account TEXT, payload TEXT)")
             db.execute("CREATE TABLE IF NOT EXISTS bot_state (account TEXT PRIMARY KEY, state TEXT)")
+            db.commit()
             previous=db.execute("SELECT state FROM bot_state WHERE account=?",(account_key,)).fetchone()
             for (payload,) in db.execute("SELECT payload FROM bot_audit WHERE account=? ORDER BY seq DESC LIMIT 100",(account_key,)):
                 self.events.append(json.loads(payload))
@@ -33,9 +35,10 @@ class Bot:
 
     def record(self,event):
         event={"time":time.time(),**event}
-        with sqlite3.connect(self.path) as db:
+        with closing(sqlite3.connect(self.path)) as db:
             db.execute("INSERT INTO bot_audit(account,payload) VALUES (?,?)",(self.account_key,json.dumps(event)))
             db.execute("INSERT OR REPLACE INTO bot_state VALUES (?,?)",(self.account_key,self.state))
+            db.commit()
         self.events.appendleft(event)
 
     def allowed(self):
