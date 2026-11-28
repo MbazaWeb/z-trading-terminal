@@ -67,7 +67,7 @@ function LoginCard() {
   const [showMt5Form, setShowMt5Form] = useState(false);
   const [loginNumber, setLoginNumber] = useState("");
   const [password, setPassword] = useState("");
-  const [server, setServer] = useState<string>("MetaQuotes-Demo");
+  const [server, setServer] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [errors, setErrors] = useState<{ login?: string; password?: string }>(
@@ -151,12 +151,18 @@ function LoginCard() {
           <AccountTypePill
             type="demo"
             active={pendingAccountType === "demo"}
-            onSelect={(t) => setPendingAccountType(t)}
+            onSelect={(t) => {
+              setPendingAccountType(t);
+              setServer("");
+            }}
           />
           <AccountTypePill
             type="real"
             active={pendingAccountType === "real"}
-            onSelect={(t) => setPendingAccountType(t)}
+            onSelect={(t) => {
+              setPendingAccountType(t);
+              setServer("");
+            }}
           />
         </div>
       </div>
@@ -297,7 +303,7 @@ function LoginCard() {
               >
                 Server / Broker
               </Label>
-              <Input id="mt5-server" value={server} onChange={(e) => setServer(e.target.value)} placeholder="Exact MT5 broker server" />
+              <Input id="mt5-server" value={server} onChange={(e) => setServer(e.target.value)} placeholder={`Exact ${pendingAccountType} broker server`} />
             </div>
 
             {/* Account type toggle (synced with pending) */}
@@ -344,7 +350,9 @@ function LoginCard() {
       <p className="mt-6 text-center text-[11px] leading-relaxed text-muted-foreground">
         By signing in, you agree to the Terms of Service and Privacy Policy.
         <br />
-        This is a demo application — no real trades are executed.
+        {pendingAccountType === "demo"
+          ? "Demo account selected. Connect a verified demo account to access supported trading features."
+          : "Real account selected. Real order placement is not available through this terminal yet."}
       </p>
     </div>
   );

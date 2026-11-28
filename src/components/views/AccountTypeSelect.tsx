@@ -92,8 +92,7 @@ export function AccountTypeSelect() {
         </div>
 
         <p className="mt-6 text-center text-[11px] text-muted-foreground">
-          Demo accounts use virtual funds. Real accounts require verified funds
-          in your broker account.
+          Choose the account type that matches your broker login.
         </p>
       </div>
     </div>

@@ -17,7 +17,7 @@ import type { ChartType, IndicatorState } from "@/components/trading/types";
  * `useMarketData` instance (so the top TickerTape and this view stay in sync)
  * and passes it in via the `market` prop.
  */
-export function TradingView({ market, canTrade, onSignIn }: { market: MarketState; canTrade: boolean; onSignIn: ()=>void }) {
+export function TradingView({ market, canTrade, accountType, onSignIn }: { market: MarketState; canTrade: boolean; accountType: "real" | "demo" | null; onSignIn: ()=>void }) {
 
   const [chartType, setChartType] = useState<ChartType>("candles");
   const [indicators, setIndicators] = useState<IndicatorState>({
@@ -69,7 +69,7 @@ export function TradingView({ market, canTrade, onSignIn }: { market: MarketStat
               symbol={market.activeSymbol}
               lastPrice={market.livePrice}
             />
-            {canTrade ? <Mt5OrderPanel key={market.activeSymbol.id} symbol={market.activeSymbol.id} ready={market.status==="ready"}/> : <section className="rounded-md border border-[var(--panel-border)] bg-[#0d1117] p-3"><h2 className="mb-3 text-xs font-semibold uppercase tracking-wide">Trade</h2><div className="grid grid-cols-2 gap-2"><button onClick={onSignIn} className="rounded-lg bg-[var(--bull)] py-3 font-bold text-[#0a0e17]">BUY</button><button onClick={onSignIn} className="rounded-lg bg-[var(--bear)] py-3 font-bold text-white">SELL</button></div><p className="mt-3 text-center text-xs text-muted-foreground">Sign in to trade on a verified demo account.</p></section>}
+            {canTrade ? <Mt5OrderPanel key={market.activeSymbol.id} symbol={market.activeSymbol.id} ready={market.status==="ready"}/> : <section className="rounded-md border border-[var(--panel-border)] bg-[#0d1117] p-3"><h2 className="mb-3 text-xs font-semibold uppercase tracking-wide">Trade</h2><div className="grid grid-cols-2 gap-2"><button onClick={onSignIn} className="rounded-lg bg-[var(--bull)] py-3 font-bold text-[#0a0e17]">BUY</button><button onClick={onSignIn} className="rounded-lg bg-[var(--bear)] py-3 font-bold text-white">SELL</button></div><p className="mt-3 text-center text-xs text-muted-foreground">{accountType ? `${accountType === "demo" ? "Demo" : "Real"} account selected · Order placement is unavailable for this broker connection.` : "Sign in to connect a broker account."}</p></section>}
           </div>
         </div>
 
@@ -91,8 +91,8 @@ export function TradingView({ market, canTrade, onSignIn }: { market: MarketStat
           </span>
           <span>
             {market.source === "COINBASE"
-              ? "Coinbase market data · Read-only. Demo execution disabled."
-              : "MT5 broker feed · Demo execution only."}
+              ? "Public market data · Read-only."
+              : `MT5 broker feed · ${accountType === "demo" ? "Demo" : accountType === "real" ? "Real" : "Selected"} account · Order execution disabled.`}
           </span>
           <span className="font-mono tabular-nums">v1.0.0</span>
         </div>
