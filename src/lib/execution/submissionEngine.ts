@@ -12,16 +12,16 @@ export async function submitReservedDemoOrder(
   transport: (reservationId: string) => Promise<BrokerOutcome>
 ) {
   if (process.env.REAL_TRADING_ENABLED !== "false" ||
-      process.env.AI_EXECUTION_ENABLED !== "true" ||
+      process.env.MT5_DEMO_EXECUTION !== "true" ||
       process.env.ZT_OWNER_USER_ID !== scope.userId ||
       process.env.MT5_LOGIN !== scope.accountId) throw new Error("Demo execution disabled");
   const initial = await getAIControls(db, scope.userId);
-  if (!initial.running || initial.emergencyStop) throw new Error("AI stopped");
+  if (!initial.running || initial.emergencyStop) throw new Error("Strategy controller stopped");
   const id = await reserveOrder(db, scope, signalKey);
   const current = await getAIControls(db, scope.userId);
   if (!current.running || current.emergencyStop || current.revision !== initial.revision) {
     await transitionOrder(db, scope, id, "reserved", "rejected");
-    throw new Error("AI controls changed");
+    throw new Error("Strategy controls changed");
   }
   await transitionOrder(db, scope, id, "reserved", "submitting");
   let outcome: BrokerOutcome;
