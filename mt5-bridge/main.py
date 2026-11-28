@@ -162,3 +162,29 @@ def positions():
             ]
         }
 
+
+@app.get("/market", dependencies=[Depends(authenticate)])
+def market(symbol: str):
+    import time
+    import math
+    with broker():
+        if not mt5.symbol_select(symbol, True):
+            raise HTTPException(404, "Symbol unavailable")
+        info = mt5.symbol_info(symbol)
+        tick = mt5.symbol_info_tick(symbol)
+        now = time.time()
+        if info is None or tick is None or info.trade_mode != mt5.SYMBOL_TRADE_MODE_FULL:
+            raise HTTPException(503, "Market unavailable")
+        if not all(math.isfinite(x) for x in (tick.bid, tick.ask)) or not 0 < tick.bid <= tick.ask or not 0 <= now - tick.time <= 60:
+            raise HTTPException(503, "Stale or invalid quote")
+        rates = mt5.copy_rates_from_pos(symbol, mt5.TIMEFRAME_M1, 1, 150)
+        if rates is None or len(rates) < 50:
+            raise HTTPException(503, "Insufficient closed candles")
+        candles = [{"time": int(r["time"]) * 1000, "open": float(r["open"]),
+                    "high": float(r["high"]), "low": float(r["low"]),
+                    "close": float(r["close"]), "volume": int(r["tick_volume"])} for r in rates]
+        if not 0 <= now - candles[-1]["time"] / 1000 - 60 <= 120:
+            raise HTTPException(503, "Stale candle history")
+        return {"symbol": symbol, "bid": tick.bid, "ask": tick.ask,
+                "observedAt": tick.time * 1000, "candles": candles,
+                "volumeType": "tick_count", "provider": "mt5", "accountType": "demo"}
