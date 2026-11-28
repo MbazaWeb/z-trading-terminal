@@ -3,6 +3,7 @@
 import { memo, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { AIAccountStatus } from "./AIAccountStatus";
+import { ServerAgentControls } from "./ServerAgentControls";
 import {
   Bell,
   Brain,
@@ -1529,6 +1530,7 @@ export const AgentsView = memo(function AgentsView() {
       </header>
 
       <AIAccountStatus />
+      <ServerAgentControls />
       {/* Consensus + signals + discussion */}
       <ConsensusPanel />
 
