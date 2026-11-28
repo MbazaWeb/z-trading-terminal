@@ -71,7 +71,7 @@ export async function GET(request: Request) {
     //    for the cron; the browser UI writes to Supabase for user-specific
     //    config, but the cron uses env defaults for the global bot)
     const botRunning = process.env.BOT_RUNNING === "true";
-    const activeSymbol = process.env.BOT_DEFAULT_SYMBOL ?? "BTCUSDT";
+    const activeSymbol = process.env.BOT_DEFAULT_SYMBOL ?? "PAXGUSDT";
 
     if (!botRunning) {
       summary.status = "bot_stopped";

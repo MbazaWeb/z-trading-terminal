@@ -33,14 +33,13 @@ export interface BinanceSymbol {
 }
 
 export const SYMBOLS: BinanceSymbol[] = [
+  // Gold is the primary instrument — PAXG/USDT on Binance tracks spot gold (1 PAXG = 1 troy oz)
+  { id: "PAXGUSDT", label: "XAU/USD", base: "XAU", quote: "USD", kind: "crypto", name: "Gold (PAXG)" },
   { id: "BTCUSDT", label: "BTC/USDT", base: "BTC", quote: "USDT", kind: "crypto", name: "Bitcoin" },
   { id: "ETHUSDT", label: "ETH/USDT", base: "ETH", quote: "USDT", kind: "crypto", name: "Ethereum" },
   { id: "SOLUSDT", label: "SOL/USDT", base: "SOL", quote: "USDT", kind: "crypto", name: "Solana" },
   { id: "BNBUSDT", label: "BNB/USDT", base: "BNB", quote: "USDT", kind: "crypto", name: "BNB" },
   { id: "XRPUSDT", label: "XRP/USDT", base: "XRP", quote: "USDT", kind: "crypto", name: "XRP" },
-  { id: "ADAUSDT", label: "ADA/USDT", base: "ADA", quote: "USDT", kind: "crypto", name: "Cardano" },
-  { id: "DOGEUSDT", label: "DOGE/USDT", base: "DOGE", quote: "USDT", kind: "crypto", name: "Dogecoin" },
-  { id: "AVAXUSDT", label: "AVAX/USDT", base: "AVAX", quote: "USDT", kind: "crypto", name: "Avalanche" },
 ];
 
 export function findSymbol(id: string): BinanceSymbol {

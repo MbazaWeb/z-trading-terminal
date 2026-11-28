@@ -22,7 +22,7 @@ import { computePositionProfit, STRATEGY_CONFIG } from "@/lib/strategy";
 export default function Page() {
   // The shell owns the shared market-data instance so the top TickerTape and
   // the Trading view stay perfectly in sync (same symbol, same live price).
-  const market = useMarketData("BTCUSDT");
+  const market = useMarketData("PAXGUSDT");
   const [view, setView] = useState<ViewId>("trading");
 
   // --- Auth gate -------------------------------------------------------------
