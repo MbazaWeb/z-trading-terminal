@@ -33,21 +33,27 @@ model AppUser {
 }
 
 model Trade {
-  id         String   @id @default(cuid())
-  status     String   @default("closed")
-  datetime   DateTime @default(now())
-  market     String
-  side       String
-  amount     Decimal  @db.Decimal(18, 2)
-  entryPrice Decimal  @map("entry_price") @db.Decimal(18, 8)
-  exitPrice  Decimal? @map("exit_price") @db.Decimal(18, 8)
-  pnl        Decimal  @default(0) @db.Decimal(18, 2)
-  pnlPct     Decimal  @default(0) @map("pnl_pct") @db.Decimal(8, 2)
-  result     String?
-  agentId    String?  @map("agent_id")
-  source     String   @default("manual")
-  userId     String?  @map("user_id")
-  createdAt  DateTime @default(now()) @map("created_at")
+  id              String   @id @default(cuid())
+  status          String   @default("closed")
+  datetime        DateTime @default(now())
+  market          String
+  side            String
+  amount          Decimal  @db.Decimal(18, 2)
+  entryPrice      Decimal  @map("entry_price") @db.Decimal(18, 8)
+  exitPrice       Decimal? @map("exit_price") @db.Decimal(18, 8)
+  pnl             Decimal  @default(0) @db.Decimal(18, 2)
+  pnlPct          Decimal  @default(0) @map("pnl_pct") @db.Decimal(8, 2)
+  result          String?
+  agentId         String?  @map("agent_id")
+  source          String   @default("manual")
+  // Broker-reported position open/close timestamps (null for paper trades).
+  // Used by ReportsView + the agent performance rollup to compute actual
+  // hold duration (ZT-14).
+  brokerOpenTime  DateTime? @map("broker_open_time")
+  brokerCloseTime DateTime? @map("broker_close_time")
+  holdTimeMs      BigInt?   @map("hold_time_ms")
+  userId          String?  @map("user_id")
+  createdAt       DateTime @default(now()) @map("created_at")
 
   user AppUser? @relation(fields: [userId], references: [id], onDelete: SetNull)
 

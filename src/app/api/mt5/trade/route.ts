@@ -1,9 +1,11 @@
 import { NextResponse } from "next/server";
 import {
   getConnectedRpcConnection,
+  releaseRpcConnection,
   readMetaApiConfig,
   type RpcConnection,
   type MetaApiAccountInfo,
+  type MetaApiTradeResponse,
 } from "@/lib/metaApiServer";
 import {
   requireAuth,
@@ -141,6 +143,7 @@ async function recordTrade(
     source: "manual" | "bot" | "agent";
     sl?: number;
     tp?: number;
+    brokerOpenTime?: string | null;
   },
 ): Promise<string | null> {
   const row = {
@@ -158,6 +161,9 @@ async function recordTrade(
     source: input.source,
     client_order_id: input.clientOrderId ?? null,
     broker_order_id: input.brokerOrderId,
+    broker_open_time: input.brokerOpenTime ?? null,
+    broker_close_time: null,
+    hold_time_ms: null,
     user_id: session.userId,
   };
   try {
@@ -458,12 +464,25 @@ export async function POST(request: Request) {
     }
 
     // --- All checks pass: submit the order to the broker --------------------
-    const response =
+    const response: MetaApiTradeResponse =
       side === "buy"
         ? await result.connection.createMarketBuyOrder(symbol, volume, sl, tp)
         : await result.connection.createMarketSellOrder(symbol, volume, sl, tp);
 
     const brokerOrderId = response?.orderId != null ? String(response.orderId) : null;
+    // Capture the broker-reported open time (ZT-14). MetaApi returns this as
+    // either a Date or an ISO string; normalize to an ISO string for storage.
+    const rawOpenTime = response?.openTime;
+    const brokerOpenTimeIso =
+      rawOpenTime != null
+        ? rawOpenTime instanceof Date
+          ? rawOpenTime.toISOString()
+          : typeof rawOpenTime === "number"
+            ? new Date(rawOpenTime).toISOString()
+            : typeof rawOpenTime === "string"
+              ? new Date(rawOpenTime).toISOString()
+              : null
+        : null;
 
     // Record the trade in Supabase with the broker order id + client order id.
     // We don't fail the request if the Supabase insert fails — the broker
@@ -480,6 +499,7 @@ export async function POST(request: Request) {
       source: "manual",
       sl,
       tp,
+      brokerOpenTime: brokerOpenTimeIso,
     });
 
     return NextResponse.json({
@@ -492,6 +512,7 @@ export async function POST(request: Request) {
       tp: tp ?? null,
       orderId: brokerOrderId,
       positionId: response?.positionId != null ? String(response.positionId) : null,
+      brokerOpenTime: brokerOpenTimeIso,
       tradeId,
       persisted: tradeId != null,
       balance,
@@ -505,11 +526,7 @@ export async function POST(request: Request) {
     );
   } finally {
     if (connection) {
-      try {
-        await connection.close();
-      } catch {
-        /* ignore */
-      }
+      await releaseRpcConnection(connection);
     }
   }
 }

@@ -94,6 +94,18 @@ export interface MetaApiPosition {
 export interface MetaApiTradeResponse {
   orderId?: number;
   positionId?: number;
+  /**
+   * Broker-reported position open time. Populated on market buy/sell order
+   * responses. Captured by /api/mt5/trade and stored on the trade row as
+   * `broker_open_time` (ZT-14).
+   */
+  openTime?: Date | string | number;
+  /**
+   * Broker-reported position close time. Populated when a position is closed
+   * via closePosition(). Captured by /api/mt5/close and stored on the trade
+   * row as `broker_close_time` (ZT-14).
+   */
+  closeTime?: Date | string | number;
   // The SDK's full response includes a numericCode / description / lots of
   // other fields; we only surface what the UI shows.
 }
@@ -142,14 +154,43 @@ export type RpcConnection = {
     stopLoss?: number,
     takeProfit?: number,
   ): Promise<MetaApiTradeResponse>;
-  closePosition(positionId: string): Promise<void>;
+  closePosition(positionId: string): Promise<MetaApiTradeResponse | void>;
   close(): Promise<void>;
 };
+
+// ---- Connection caching (ZT-12) -------------------------------------------
+//
+// MetaApi's RPC connection wraps a websocket that is expensive to establish
+// (deploy + waitConnected + connect can take several seconds). When a cron
+// cycle fires or a series of UI polls hit /api/mt5/positions every few
+// seconds, re-establishing the connection each call adds visible latency and
+// can hit MetaApi's connection-rate limit.
+//
+// We cache the most recently established connection for up to
+// `CONNECTION_TTL_MS` (5 minutes). On cache hit we verify the connection is
+// still alive by calling `getAccountInformation()` — if that throws we drop
+// the cached entry and open a fresh one. The cache is per-process
+// (serverless functions are stateless across invocations, but within a
+// warm Lambda/Vercel function reuse the cache survives).
+
+let cachedConnection: RpcConnection | null = null;
+let cachedConnectionApi: MetaApiInstance | null = null;
+let connectionExpiry = 0;
+const CONNECTION_TTL_MS = 5 * 60 * 1000;
+let connectionInFlight: Promise<{
+  api: MetaApiInstance;
+  connection: RpcConnection;
+}> | null = null;
 
 /**
  * Returns a connected RPC connection to the configured MetaApi account.
  *
- * The caller is responsible for invoking `connection.close()` (or, more
+ * The returned connection may be a cached instance — callers that need to
+ * dispose of resources after use should call `releaseRpcConnection()` (which
+ * no-ops on cached connections) instead of `connection.close()` (which would
+ * tear down the cache for subsequent callers).
+ *
+ * The caller is responsible for invoking `releaseRpcConnection()` (or, more
  * practically, letting the serverless function terminate — MetaApi's
  * websocket is closed automatically when the process exits).
  */
@@ -157,29 +198,113 @@ export async function getConnectedRpcConnection(): Promise<{
   api: MetaApiInstance;
   connection: RpcConnection;
 }> {
-  const config = readMetaApiConfig();
-  if (!config) {
-    throw new Error("MetaApi not configured. Set METAAPI_TOKEN and MT5_ACCOUNT_ID.");
+  // Reuse a healthy cached connection when one is available.
+  if (cachedConnection && Date.now() < connectionExpiry) {
+    try {
+      await cachedConnection.getAccountInformation();
+      return {
+        api: cachedConnectionApi as MetaApiInstance,
+        connection: cachedConnection,
+      };
+    } catch {
+      // Stale connection — drop and rebuild below.
+      try {
+        await cachedConnection.close();
+      } catch {
+        /* ignore */
+      }
+      cachedConnection = null;
+      cachedConnectionApi = null;
+      connectionExpiry = 0;
+    }
   }
-  const api = new MetaApiCtor(config.token);
-  const account = await api.metatraderAccountApi.getAccount(config.accountId);
-  // Best-effort: ensure the account is deployed before connecting. If the
-  // account is already DEPLOYED this is a no-op.
+
+  // Dedupe concurrent attempts so two simultaneous requests don't both
+  // spin up a fresh MetaApi account + websocket.
+  if (connectionInFlight) {
+    return connectionInFlight;
+  }
+
+  connectionInFlight = (async () => {
+    const config = readMetaApiConfig();
+    if (!config) {
+      throw new Error("MetaApi not configured. Set METAAPI_TOKEN and MT5_ACCOUNT_ID.");
+    }
+    const api = new MetaApiCtor(config.token);
+    const account = await api.metatraderAccountApi.getAccount(config.accountId);
+    // Best-effort: ensure the account is deployed before connecting. If the
+    // account is already DEPLOYED this is a no-op.
+    try {
+      await account.deploy();
+    } catch {
+      /* ignore — already deployed or deploying */
+    }
+    // Wait for the broker connection to be ready (max ~30s). If this fails we
+    // surface the error so the route handler can return 500 to the client.
+    try {
+      await account.waitConnected(30);
+    } catch {
+      /* ignore — connect() below will surface any real errors */
+    }
+    const connection = account.getRPCConnection();
+    await connection.connect();
+
+    cachedConnection = connection;
+    cachedConnectionApi = api;
+    connectionExpiry = Date.now() + CONNECTION_TTL_MS;
+    return { api, connection };
+  })();
+
   try {
-    await account.deploy();
-  } catch {
-    /* ignore — already deployed or deploying */
+    const result = await connectionInFlight;
+    return result;
+  } finally {
+    connectionInFlight = null;
   }
-  // Wait for the broker connection to be ready (max ~30s). If this fails we
-  // surface the error so the route handler can return 500 to the client.
+}
+
+/**
+ * Release a connection obtained from `getConnectedRpcConnection()`. When the
+ * connection is the cached one this is a no-op (the cache will eventually
+ * expire and be rebuilt); when the caller retrieved a fresh connection (e.g.
+ * because the cache was stale) it is closed.
+ *
+ * In practice every caller uses the cached path, so this just keeps the
+ * finally blocks in route handlers honest.
+ */
+export async function releaseRpcConnection(conn: RpcConnection): Promise<void> {
+  if (conn === cachedConnection) return;
   try {
-    await account.waitConnected(30);
+    await conn.close();
   } catch {
-    /* ignore — connect() below will surface any real errors */
+    /* ignore */
   }
-  const connection = account.getRPCConnection();
-  await connection.connect();
-  return { api, connection };
+}
+
+/**
+ * Force-close the cached connection (e.g. on a fatal broker error). The
+ * next call to getConnectedRpcConnection will rebuild it.
+ */
+export async function invalidateRpcConnection(): Promise<void> {
+  const conn = cachedConnection;
+  const api = cachedConnectionApi;
+  cachedConnection = null;
+  cachedConnectionApi = null;
+  connectionExpiry = 0;
+  if (conn) {
+    try {
+      await conn.close();
+    } catch {
+      /* ignore */
+    }
+  }
+  if (api) {
+    try {
+      api.close();
+    } catch {
+      /* ignore */
+    }
+  }
 }
 
 /**

@@ -17,7 +17,9 @@ import {
   DAY_MS,
   formatDate,
   formatDateTime,
+  formatHoldDuration,
   formatMoney,
+  formatTimestamp,
   tradesToCsv,
   agentsToCsv,
 } from "@/lib/format";
@@ -466,7 +468,7 @@ function CsvPreview({
     const rows = trades.slice(0, 8);
     return (
       <div className="overflow-x-auto">
-        <table className="w-full min-w-[720px] text-left text-[11px]">
+        <table className="w-full min-w-[1080px] text-left text-[11px]">
           <thead>
             <tr className="border-b border-[var(--panel-border)] text-[9px] uppercase tracking-wider text-muted-foreground">
               <th className="px-2 py-1.5 font-medium">Datetime</th>
@@ -475,59 +477,80 @@ function CsvPreview({
               <th className="px-2 py-1.5 text-right font-medium">Amount</th>
               <th className="px-2 py-1.5 text-right font-medium">P&amp;L</th>
               <th className="px-2 py-1.5 text-right font-medium">Result</th>
+              <th className="px-2 py-1.5 font-medium">Open Time</th>
+              <th className="px-2 py-1.5 font-medium">Close Time</th>
+              <th className="px-2 py-1.5 text-right font-medium">Hold</th>
             </tr>
           </thead>
           <tbody>
             {rows.length === 0 && (
               <tr>
-                <td colSpan={6} className="px-2 py-6 text-center text-muted-foreground">
+                <td colSpan={9} className="px-2 py-6 text-center text-muted-foreground">
                   No trades in range.
                 </td>
               </tr>
             )}
-            {rows.map((t) => (
-              <tr key={t.id} className="border-b border-[var(--panel-border)]/40">
-                <td className="px-2 py-1.5 font-mono text-muted-foreground tabular-nums">
-                  {formatDateTime(t.datetime)}
-                </td>
-                <td className="px-2 py-1.5 font-mono font-medium">{t.market}</td>
-                <td
-                  className={cn(
-                    "px-2 py-1.5 font-medium",
-                    t.side === "buy" ? "text-[var(--bull)]" : "text-[var(--bear)]",
-                  )}
-                >
-                  {t.side === "buy" ? "Buy" : "Sell"}
-                </td>
-                <td className="px-2 py-1.5 text-right font-mono tabular-nums">
-                  ${t.amount.toFixed(2)}
-                </td>
-                <td
-                  className={cn(
-                    "px-2 py-1.5 text-right font-mono tabular-nums",
-                    t.status === "open"
-                      ? "text-muted-foreground"
-                      : t.pnl >= 0
-                        ? "text-[var(--bull)]"
-                        : "text-[var(--bear)]",
-                  )}
-                >
-                  {t.status === "open" ? "--" : formatMoney(t.pnl)}
-                </td>
-                <td className="px-2 py-1.5 text-right">
-                  {t.status === "open"
-                    ? "Open"
-                    : t.result === "win"
-                      ? "Win"
-                      : "Loss"}
-                </td>
-              </tr>
-            ))}
+            {rows.map((t) => {
+              const hasBrokerTs =
+                t.brokerOpenTime != null || t.brokerCloseTime != null;
+              return (
+                <tr key={t.id} className="border-b border-[var(--panel-border)]/40">
+                  <td className="px-2 py-1.5 font-mono text-muted-foreground tabular-nums">
+                    {formatDateTime(t.datetime)}
+                  </td>
+                  <td className="px-2 py-1.5 font-mono font-medium">{t.market}</td>
+                  <td
+                    className={cn(
+                      "px-2 py-1.5 font-medium",
+                      t.side === "buy" ? "text-[var(--bull)]" : "text-[var(--bear)]",
+                    )}
+                  >
+                    {t.side === "buy" ? "Buy" : "Sell"}
+                  </td>
+                  <td className="px-2 py-1.5 text-right font-mono tabular-nums">
+                    ${t.amount.toFixed(2)}
+                  </td>
+                  <td
+                    className={cn(
+                      "px-2 py-1.5 text-right font-mono tabular-nums",
+                      t.status === "open"
+                        ? "text-muted-foreground"
+                        : t.pnl >= 0
+                          ? "text-[var(--bull)]"
+                          : "text-[var(--bear)]",
+                    )}
+                  >
+                    {t.status === "open" ? "--" : formatMoney(t.pnl)}
+                  </td>
+                  <td className="px-2 py-1.5 text-right">
+                    {t.status === "open"
+                      ? "Open"
+                      : t.result === "win"
+                        ? "Win"
+                        : "Loss"}
+                  </td>
+                  <td className="px-2 py-1.5 font-mono text-[10px] text-muted-foreground tabular-nums">
+                    {formatTimestamp(t.brokerOpenTime ?? null)}
+                    {!hasBrokerTs && t.status === "closed" && (
+                      <span className="ml-1 text-[9px] opacity-60">est</span>
+                    )}
+                  </td>
+                  <td className="px-2 py-1.5 font-mono text-[10px] text-muted-foreground tabular-nums">
+                    {formatTimestamp(t.brokerCloseTime ?? null)}
+                  </td>
+                  <td className="px-2 py-1.5 text-right font-mono text-[10px] tabular-nums">
+                    {formatHoldDuration(t.holdTimeMs ?? null)}
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
         <p className="mt-2 text-[10px] text-muted-foreground">
           Showing {rows.length} of {trades.length} rows. Full CSV will contain
-          all columns (ID, status, entry/exit price, P&L %, agent, source).
+          all columns (ID, status, entry/exit price, P&L %, agent, source,
+          broker open/close time, hold duration). Trades without broker
+          timestamps are labeled &quot;est&quot; (estimated).
         </p>
       </div>
     );
@@ -743,6 +766,9 @@ function PrintReport({
             <th className="right">Exit</th>
             <th className="right">P&amp;L</th>
             <th>Result</th>
+            <th>Open Time</th>
+            <th>Close Time</th>
+            <th className="right">Hold</th>
           </tr>
         </thead>
         <tbody>
@@ -766,6 +792,9 @@ function PrintReport({
                     ? "Win"
                     : "Loss"}
               </td>
+              <td>{formatTimestamp(t.brokerOpenTime ?? null)}</td>
+              <td>{formatTimestamp(t.brokerCloseTime ?? null)}</td>
+              <td className="right">{formatHoldDuration(t.holdTimeMs ?? null)}</td>
             </tr>
           ))}
         </tbody>

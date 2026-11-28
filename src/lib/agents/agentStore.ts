@@ -35,9 +35,11 @@ import { analyze as analyzeArbitrage } from "./arbitrage";
 import type {
   AgentCore,
   AgentMessage,
+  AgentPerformance,
   AgentSignal,
   ConsensusResult,
 } from "./types";
+import type { AgentRegistryEntry } from "./registry";
 
 // ---- Agent definitions ------------------------------------------------------
 
@@ -46,14 +48,11 @@ interface AgentDef {
   name: string;
   strategy: string;
   strategyType: string;
+  strategyVersion: string;
   icon: typeof Radar;
   iconColor: string;
   baseConfidence: number;
-  analyzer: (
-    agent: AgentCore,
-    candles: Candle[],
-    ticker: TickerStats,
-  ) => AgentSignal;
+  analyzer: AgentRegistryEntry["analyzer"];
 }
 
 const AGENT_DEFS: AgentDef[] = [
@@ -62,6 +61,7 @@ const AGENT_DEFS: AgentDef[] = [
     name: "Momentum Hunter",
     strategy: "Trend Following",
     strategyType: "Momentum",
+    strategyVersion: "momentum-v1.2",
     icon: Radar,
     iconColor: "#16c784",
     baseConfidence: 72,
@@ -72,6 +72,7 @@ const AGENT_DEFS: AgentDef[] = [
     name: "Mean Reverter",
     strategy: "Mean Reversion",
     strategyType: "Reversion",
+    strategyVersion: "reverter-v1.1",
     icon: RefreshCw,
     iconColor: "#f0b90b",
     baseConfidence: 68,
@@ -82,6 +83,7 @@ const AGENT_DEFS: AgentDef[] = [
     name: "Sentiment Scalper",
     strategy: "Sentiment Analysis",
     strategyType: "Sentiment",
+    strategyVersion: "sentiment-v1.0",
     icon: BrainCircuit,
     iconColor: "#4f9cf9",
     baseConfidence: 81,
@@ -92,6 +94,7 @@ const AGENT_DEFS: AgentDef[] = [
     name: "Breakout Sniper",
     strategy: "Breakout Detection",
     strategyType: "Breakout",
+    strategyVersion: "breakout-v1.1",
     icon: Crosshair,
     iconColor: "#ea3943",
     baseConfidence: 74,
@@ -102,6 +105,7 @@ const AGENT_DEFS: AgentDef[] = [
     name: "Arbitrage Detector",
     strategy: "Statistical Arbitrage",
     strategyType: "Arbitrage",
+    strategyVersion: "arbitrage-v1.0",
     icon: Shuffle,
     iconColor: "#a855f7",
     baseConfidence: 86,
@@ -119,12 +123,28 @@ const ANALYZERS: Record<string, AgentDef["analyzer"]> = {
   arbitrage: analyzeArbitrage,
 };
 
+const EMPTY_PERFORMANCE: AgentPerformance = {
+  totalTrades: 0,
+  wins: 0,
+  losses: 0,
+  winRate: 0,
+  totalPnl: 0,
+  profitFactor: 0,
+      grossProfit: 0,
+      grossLoss: 0,
+  maxDrawdown: 0,
+  avgHoldTimeMs: 0,
+  sharpeRatio: 0,
+  lastEvaluatedAt: 0,
+};
+
 function buildInitialAgents(): AgentCore[] {
   return AGENT_DEFS.map((d) => ({
     id: d.id,
     name: d.name,
     strategy: d.strategy,
     strategyType: d.strategyType,
+    strategyVersion: d.strategyVersion,
     icon: d.icon,
     iconColor: d.iconColor,
     status: "active",
@@ -139,6 +159,7 @@ function buildInitialAgents(): AgentCore[] {
     lastImprovement: null,
     improvementLog: [],
     sparkline: [],
+    performance: { ...EMPTY_PERFORMANCE },
   }));
 }
 
@@ -228,7 +249,7 @@ interface AgentStoreState {
   syncStatsFromTrades: (
     statsByAgent: Map<
       string,
-      { winRate: number; totalTrades: number; pnl: number; sparkline: number[] }
+      { winRate: number; totalTrades: number; pnl: number; sparkline: number[]; performance?: AgentPerformance }
     >,
   ) => void;
   clearExpiredLearning: () => void;
@@ -383,6 +404,7 @@ export const useAgentStore = create<AgentStoreState>((set, get) => ({
           learningUntil: null,
           improvementLog: [],
           lastImprovement: null,
+          performance: { ...EMPTY_PERFORMANCE, lastEvaluatedAt: Date.now() },
         };
       }),
     })),
@@ -398,6 +420,10 @@ export const useAgentStore = create<AgentStoreState>((set, get) => ({
           totalTrades: st.totalTrades,
           pnl: st.pnl,
           sparkline: st.sparkline,
+          performance:
+            st.performance ??
+            a.performance ??
+            { ...EMPTY_PERFORMANCE, lastEvaluatedAt: Date.now() },
         };
       }),
     })),
@@ -416,6 +442,10 @@ export const useAgentStore = create<AgentStoreState>((set, get) => ({
       return changed ? { agents } : s;
     }),
 }));
+
+// ---- Strategy version registry (re-exported for views) --------------------
+
+export { AGENT_REGISTRY } from "./registry";
 
 // ---- Hooks for views -------------------------------------------------------
 

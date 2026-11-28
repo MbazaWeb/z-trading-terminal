@@ -96,6 +96,10 @@ interface BotStoreState extends BotState {
     reason: "SL" | "TP" | "manual",
   ) => void;
   updatePositionPrice: (posId: string, currentPrice: number) => void;
+  /** Replace the entire positions array (used by BotView when syncing from /api/mt5/positions). */
+  setPositions: (positions: BotPosition[]) => void;
+  /** Replace the entire log array (used by BotView when syncing from /api/bot/logs). */
+  setLogs: (logs: BotLogEntry[]) => void;
   reset: () => void;
 }
 
@@ -187,6 +191,10 @@ export const useBotStore = create<BotStoreState>((set, get) => ({
         p.id === posId ? { ...p, currentPrice } : p,
       ),
     })),
+
+  setPositions: (positions) => set({ positions }),
+
+  setLogs: (logs) => set({ log: logs.slice(0, 200) }),
 
   reset: () =>
     set({

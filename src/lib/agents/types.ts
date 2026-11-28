@@ -65,11 +65,37 @@ export interface ImprovementLogEntry {
   newConfidence: number;
 }
 
+/**
+ * Performance metrics calculated from a list of closed trades attributed to
+ * a single agent. Used to compare strategies and decide whether to keep or
+ * retire an agent version.
+ */
+export interface AgentPerformance {
+  totalTrades: number;
+  wins: number;
+  losses: number;
+  winRate: number; // wins / totalTrades * 100
+  totalPnl: number; // sum of P&L
+  grossProfit: number; // sum of winning trades' P&L
+  grossLoss: number; // abs sum of losing trades' P&L
+  profitFactor: number; // gross profit / gross loss
+  maxDrawdown: number; // max peak-to-trough decline in cumulative P&L
+  avgHoldTimeMs: number; // average position duration
+  sharpeRatio: number; // risk-adjusted return (mean pnl / std dev)
+  lastEvaluatedAt: number; // timestamp of last performance calc
+}
+
 export interface AgentCore {
   id: string;
   name: string;
   strategy: string;
   strategyType: string;
+  /**
+   * Strategy version label (e.g. "momentum-v1.2"). Bumped whenever the
+   * analyzer's parameters change so we can compare performance across
+   * versions in the backtest / report views.
+   */
+  strategyVersion: string;
   icon: LucideIcon;
   iconColor: string;
   status: AgentStatus;
@@ -84,6 +110,12 @@ export interface AgentCore {
   lastImprovement: ImprovementLogEntry | null;
   improvementLog: ImprovementLogEntry[];
   sparkline: number[];
+  /**
+   * Computed performance metrics for the agent (winRate, profit factor,
+   * max drawdown, Sharpe ratio, etc.). Recomputed on demand from the trade
+   * history via `calculatePerformance`.
+   */
+  performance: AgentPerformance;
 }
 
 // Agent analysis function signature — every agent implements this.

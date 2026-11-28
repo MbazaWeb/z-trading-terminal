@@ -5,6 +5,8 @@ import { toast } from "sonner";
 import {
   BrainCircuit,
   Crosshair,
+  FlaskConical,
+  Loader2,
   MessageSquare,
   Plus,
   Radar,
@@ -32,6 +34,7 @@ import {
 import { cn } from "@/lib/utils";
 import {
   formatDateTime,
+  formatDuration,
   formatMoney,
   formatTime,
 } from "@/lib/format";
@@ -42,9 +45,313 @@ import {
   useLastConsensus,
   useDiscussion,
 } from "@/lib/agents/agentStore";
+import { formatProfitFactor } from "@/lib/agents/performance";
+import type { AgentPerformance } from "@/lib/agents/types";
 import { useTrades } from "@/lib/tradeStore";
 import type { AgentCore } from "@/lib/agents/types";
 import type { LucideIcon } from "lucide-react";
+
+// ---- Strategy version badge ---------------------------------------------
+
+function StrategyVersionBadge({ version }: { version: string }) {
+  // Extract the short tag after the leading prefix (e.g. "momentum-v1.2" -> "v1.2").
+  const shortTag = version.includes("-") ? version.split("-").pop() ?? version : version;
+  return (
+    <span
+      className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider bg-white/5 text-muted-foreground"
+      title={`Strategy version: ${version}`}
+    >
+      {shortTag}
+    </span>
+  );
+}
+
+// ---- Backtest modal ------------------------------------------------------
+
+interface BacktestResultData {
+  agentId: string;
+  symbol: string;
+  interval: string;
+  trades: Array<{
+    id: string;
+    side: "buy" | "sell";
+    entryPrice: number;
+    exitPrice: number;
+    pnl: number;
+    result: "win" | "loss" | null;
+    holdTimeMs: number | null;
+    datetime: number;
+  }>;
+  performance: AgentPerformance;
+  equity: number[];
+  candlesAnalyzed: number;
+  notional: number;
+}
+
+function BacktestModal({
+  open,
+  onOpenChange,
+  agent,
+}: {
+  open: boolean;
+  onOpenChange: (o: boolean) => void;
+  agent: AgentCore | null;
+}) {
+  const [loading, setLoading] = useState(false);
+  const [result, setResult] = useState<BacktestResultData | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [symbol, setSymbol] = useState("BTCUSDT");
+  const [interval, setInterval] = useState("15m");
+
+  useEffect(() => {
+    if (!open) {
+      setResult(null);
+      setError(null);
+    }
+  }, [open]);
+
+  async function runBacktest() {
+    if (!agent) return;
+    setLoading(true);
+    setError(null);
+    setResult(null);
+    try {
+      const url = `/api/agents/backtest?agentId=${encodeURIComponent(agent.id)}&symbol=${encodeURIComponent(symbol)}&interval=${encodeURIComponent(interval)}`;
+      const res = await fetch(url, { cache: "no-store" });
+      if (!res.ok) {
+        const err = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(err.error ?? `HTTP ${res.status}`);
+      }
+      const data = (await res.json()) as { ok?: boolean; result?: BacktestResultData };
+      if (!data.result) throw new Error("Backtest returned no result");
+      setResult(data.result);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="border-[var(--panel-border)] bg-[#0d1117] sm:max-w-2xl">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <FlaskConical className="size-4 text-[#4f9cf9]" />
+            Backtest: {agent?.name ?? "Agent"}
+            {agent && <StrategyVersionBadge version={agent.strategyVersion} />}
+          </DialogTitle>
+          <DialogDescription>
+            Run the agent's strategy on historical Binance candles. The
+            backtest is read-only — no orders are placed.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="flex flex-col gap-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <label className="flex items-center gap-1 text-[11px] text-muted-foreground">
+              Symbol
+              <select
+                value={symbol}
+                onChange={(e) => setSymbol(e.target.value)}
+                className="h-8 rounded-md border border-[var(--panel-border)] bg-[#0a0e17] px-2 font-mono text-xs text-foreground"
+              >
+                <option value="BTCUSDT">BTCUSDT</option>
+                <option value="ETHUSDT">ETHUSDT</option>
+                <option value="SOLUSDT">SOLUSDT</option>
+                <option value="BNBUSDT">BNBUSDT</option>
+                <option value="XRPUSDT">XRPUSDT</option>
+                <option value="ADAUSDT">ADAUSDT</option>
+                <option value="DOGEUSDT">DOGEUSDT</option>
+                <option value="AVAXUSDT">AVAXUSDT</option>
+              </select>
+            </label>
+            <label className="flex items-center gap-1 text-[11px] text-muted-foreground">
+              Interval
+              <select
+                value={interval}
+                onChange={(e) => setInterval(e.target.value)}
+                className="h-8 rounded-md border border-[var(--panel-border)] bg-[#0a0e17] px-2 font-mono text-xs text-foreground"
+              >
+                <option value="1m">1m</option>
+                <option value="5m">5m</option>
+                <option value="15m">15m</option>
+                <option value="1H">1H</option>
+                <option value="4H">4H</option>
+                <option value="1D">1D</option>
+                <option value="1W">1W</option>
+              </select>
+            </label>
+            <Button
+              onClick={runBacktest}
+              disabled={loading}
+              size="sm"
+              className="bg-[var(--bull)] text-[#0a0e17] hover:bg-[var(--bull)]/90"
+            >
+              {loading ? (
+                <Loader2 className="size-3.5 animate-spin" />
+              ) : (
+                <FlaskConical className="size-3.5" />
+              )}
+              Run Backtest
+            </Button>
+          </div>
+
+          {error && (
+            <div className="rounded-md border border-[var(--bear)]/40 bg-[var(--bear)]/10 px-3 py-2 text-[11px] text-[var(--bear)]">
+              {error}
+            </div>
+          )}
+
+          {result && (
+            <BacktestResults result={result} />
+          )}
+        </div>
+        <DialogFooter>
+          <Button
+            variant="ghost"
+            onClick={() => onOpenChange(false)}
+            className="text-muted-foreground hover:bg-[#11161f] hover:text-foreground"
+          >
+            Close
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function BacktestResults({ result }: { result: BacktestResultData }) {
+  const p = result.performance;
+  const sparkPositive =
+    result.equity.length > 1
+      ? result.equity[result.equity.length - 1] >= result.equity[0]
+      : true;
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+        <BacktestMetric label="Trades" value={String(p.totalTrades)} />
+        <BacktestMetric label="Win Rate" value={`${p.winRate.toFixed(1)}%`} tone="bull" />
+        <BacktestMetric
+          label="Profit Factor"
+          value={formatProfitFactor(p.profitFactor)}
+        />
+        <BacktestMetric
+          label="Net P&L"
+          value={formatMoney(p.totalPnl)}
+          tone={p.totalPnl >= 0 ? "bull" : "bear"}
+        />
+        <BacktestMetric
+          label="Max Drawdown"
+          value={formatMoney(p.maxDrawdown)}
+          tone="bear"
+        />
+        <BacktestMetric
+          label="Sharpe"
+          value={Number.isFinite(p.sharpeRatio) ? p.sharpeRatio.toFixed(2) : "--"}
+        />
+        <BacktestMetric
+          label="Avg Hold"
+          value={p.avgHoldTimeMs > 0 ? formatDuration(p.avgHoldTimeMs) : "--"}
+        />
+        <BacktestMetric
+          label="Candles"
+          value={String(result.candlesAnalyzed)}
+        />
+      </div>
+      <div className="rounded-lg border border-[var(--panel-border)] bg-[#0a0e17] p-3">
+        <div className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+          Equity Curve
+        </div>
+        {result.equity.length > 1 ? (
+          <Sparkline
+            values={result.equity}
+            positive={sparkPositive}
+            width={460}
+            height={80}
+          />
+        ) : (
+          <div className="flex h-20 items-center justify-center text-[11px] text-muted-foreground">
+            No trades were closed during the backtest window.
+          </div>
+        )}
+      </div>
+      <div className="rounded-lg border border-[var(--panel-border)] bg-[#0a0e17]">
+        <div className="border-b border-[var(--panel-border)] px-3 py-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+          Simulated Trades ({result.trades.length})
+        </div>
+        <div className="max-h-48 overflow-y-auto">
+          <table className="w-full text-left text-[11px]">
+            <thead>
+              <tr className="border-b border-[var(--panel-border)] text-[9px] uppercase tracking-wider text-muted-foreground">
+                <th className="px-2 py-1.5 font-medium">Side</th>
+                <th className="px-2 py-1.5 text-right font-medium">Entry</th>
+                <th className="px-2 py-1.5 text-right font-medium">Exit</th>
+                <th className="px-2 py-1.5 text-right font-medium">P&L</th>
+                <th className="px-2 py-1.5 text-right font-medium">Hold</th>
+                <th className="px-2 py-1.5 text-right font-medium">Result</th>
+              </tr>
+            </thead>
+            <tbody>
+              {result.trades.map((t) => (
+                <tr key={t.id} className="border-b border-[var(--panel-border)]/40">
+                  <td className={cn("px-2 py-1.5 font-medium", t.side === "buy" ? "text-[var(--bull)]" : "text-[var(--bear)]")}>
+                    {t.side === "buy" ? "Buy" : "Sell"}
+                  </td>
+                  <td className="px-2 py-1.5 text-right font-mono tabular-nums">
+                    {t.entryPrice.toFixed(2)}
+                  </td>
+                  <td className="px-2 py-1.5 text-right font-mono tabular-nums">
+                    {t.exitPrice.toFixed(2)}
+                  </td>
+                  <td className={cn("px-2 py-1.5 text-right font-mono tabular-nums", t.pnl >= 0 ? "text-[var(--bull)]" : "text-[var(--bear)]")}>
+                    {formatMoney(t.pnl)}
+                  </td>
+                  <td className="px-2 py-1.5 text-right font-mono text-[10px] text-muted-foreground tabular-nums">
+                    {t.holdTimeMs != null ? formatDuration(t.holdTimeMs) : "--"}
+                  </td>
+                  <td className="px-2 py-1.5 text-right">
+                    {t.result === "win" ? (
+                      <span className="text-[var(--bull)]">Win</span>
+                    ) : (
+                      <span className="text-[var(--bear)]">Loss</span>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function BacktestMetric({
+  label,
+  value,
+  tone = "neutral",
+}: {
+  label: string;
+  value: string;
+  tone?: "bull" | "bear" | "neutral";
+}) {
+  const cls =
+    tone === "bull"
+      ? "text-[var(--bull)]"
+      : tone === "bear"
+        ? "text-[var(--bear)]"
+        : "text-foreground";
+  return (
+    <div className="rounded-md border border-[var(--panel-border)] bg-[#0a0e17] p-2">
+      <div className="text-[9px] uppercase tracking-wider text-muted-foreground">
+        {label}
+      </div>
+      <div className={cn("mt-0.5 font-mono text-sm font-bold tabular-nums", cls)}>
+        {value}
+      </div>
+    </div>
+  );
+}
 
 // ---- Sparkline -----------------------------------------------------------
 
@@ -132,9 +439,11 @@ function MiniBar({ value, max = 100, color }: { value: number; max?: number; col
 function AgentCard({
   agent,
   onView,
+  onBacktest,
 }: {
   agent: AgentCore;
   onView: (id: string) => void;
+  onBacktest: (agent: AgentCore) => void;
 }) {
   const Icon: LucideIcon = agent.icon;
   const toggleStatus = useAgentStore((s) => s.toggleAgent);
@@ -166,9 +475,12 @@ function AgentCard({
             <h3 className="truncate text-sm font-bold text-foreground">
               {agent.name}
             </h3>
-            <p className="text-[11px] text-muted-foreground">
-              {agent.strategy}
-            </p>
+            <div className="mt-0.5 flex items-center gap-1.5">
+              <p className="text-[11px] text-muted-foreground">
+                {agent.strategy}
+              </p>
+              <StrategyVersionBadge version={agent.strategyVersion} />
+            </div>
           </div>
         </div>
         <StatusBadge status={agent.status} />
@@ -241,6 +553,44 @@ function AgentCard({
             )}
           >
             {formatMoney(agent.pnl)}
+          </div>
+        </div>
+      </div>
+
+      {/* Performance metrics */}
+      <div className="mt-3 grid grid-cols-4 gap-2 rounded-lg border border-[var(--panel-border)] bg-[#0a0e17] p-2.5">
+        <div>
+          <div className="text-[9px] uppercase tracking-wider text-muted-foreground">
+            Win Rate
+          </div>
+          <div className="mt-0.5 font-mono text-xs font-bold text-[var(--bull)] tabular-nums">
+            {agent.performance.winRate.toFixed(1)}%
+          </div>
+        </div>
+        <div>
+          <div className="text-[9px] uppercase tracking-wider text-muted-foreground">
+            Profit Factor
+          </div>
+          <div className="mt-0.5 font-mono text-xs font-bold text-foreground tabular-nums">
+            {formatProfitFactor(agent.performance.profitFactor)}
+          </div>
+        </div>
+        <div>
+          <div className="text-[9px] uppercase tracking-wider text-muted-foreground">
+            Max DD
+          </div>
+          <div className="mt-0.5 font-mono text-xs font-bold text-[var(--bear)] tabular-nums">
+            {formatMoney(agent.performance.maxDrawdown)}
+          </div>
+        </div>
+        <div>
+          <div className="text-[9px] uppercase tracking-wider text-muted-foreground">
+            Sharpe
+          </div>
+          <div className="mt-0.5 font-mono text-xs font-bold text-foreground tabular-nums">
+            {Number.isFinite(agent.performance.sharpeRatio)
+              ? agent.performance.sharpeRatio.toFixed(2)
+              : "--"}
           </div>
         </div>
       </div>
@@ -330,6 +680,15 @@ function AgentCard({
             className="h-7 px-2 text-[10px] font-semibold text-muted-foreground hover:bg-[#11161f] hover:text-foreground"
           >
             <RefreshCw className="size-3" />
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => onBacktest(agent)}
+            title="Run historical backtest"
+            className="h-7 border-[var(--panel-border)] bg-[#0a0e17] px-3 text-[11px] font-semibold hover:bg-[#11161f]"
+          >
+            <FlaskConical className="size-3" /> Backtest
           </Button>
           <Button
             variant="outline"
@@ -897,6 +1256,7 @@ export const AgentsView = memo(function AgentsView() {
   const trades = useTrades();
   const [selected, setSelected] = useState<string | null>(null);
   const [deployOpen, setDeployOpen] = useState(false);
+  const [backtestAgent, setBacktestAgent] = useState<AgentCore | null>(null);
 
   // Build the strategies table from live agents (mirrors the historical
   // strategy list with real numbers).
@@ -958,7 +1318,12 @@ export const AgentsView = memo(function AgentsView() {
       {/* Agent roster */}
       <div className="mt-6 grid grid-cols-1 gap-3 lg:grid-cols-2">
         {agents.map((a) => (
-          <AgentCard key={a.id} agent={a} onView={setSelected} />
+          <AgentCard
+            key={a.id}
+            agent={a}
+            onView={setSelected}
+            onBacktest={setBacktestAgent}
+          />
         ))}
       </div>
 
@@ -1036,6 +1401,11 @@ export const AgentsView = memo(function AgentsView() {
 
       <AgentDetailsDrawer agentId={selected} onClose={() => setSelected(null)} />
       <DeployAgentModal open={deployOpen} onOpenChange={setDeployOpen} />
+      <BacktestModal
+        open={backtestAgent != null}
+        onOpenChange={(o) => !o && setBacktestAgent(null)}
+        agent={backtestAgent}
+      />
     </div>
   );
 });

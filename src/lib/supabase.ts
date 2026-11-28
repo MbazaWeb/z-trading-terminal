@@ -61,6 +61,21 @@ export interface TradeRow {
   client_order_id?: string | null;
   /** Broker order id (null for paper trades). */
   broker_order_id?: string | null;
+  /**
+   * Broker-reported position open time (ISO timestamp from MetaApi's
+   * response.openTime / position.time). Null for paper trades.
+   */
+  broker_open_time?: string | null;
+  /**
+   * Broker-reported position close time. Populated when the position is
+   * closed via /api/mt5/close. Null for open positions and paper trades.
+   */
+  broker_close_time?: string | null;
+  /**
+   * Hold time in milliseconds, calculated from the broker timestamps when
+   * both are present. Null until the trade is closed.
+   */
+  hold_time_ms?: number | null;
   user_id: string | null;
   created_at: string;
 }

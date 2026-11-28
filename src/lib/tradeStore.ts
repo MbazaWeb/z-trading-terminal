@@ -48,6 +48,15 @@ export interface Trade {
   clientOrderId?: string | null;
   /** Broker order id (null for paper trades). */
   brokerOrderId?: string | null;
+  /**
+   * Broker-reported position open time (ms). Captured from MetaApi's
+   * response.openTime / position.time when the order is placed.
+   */
+  brokerOpenTime?: number | null;
+  /** Broker-reported position close time (ms). */
+  brokerCloseTime?: number | null;
+  /** Hold time (ms), derived from the broker timestamps. */
+  holdTimeMs?: number | null;
   /** True when the trade has been confirmed persisted to Supabase. */
   persisted?: boolean;
 }
@@ -61,6 +70,18 @@ function liveId(prefix: string): string {
 }
 
 function rowToTrade(row: TradeRow): Trade {
+  const brokerOpenTime = row.broker_open_time
+    ? new Date(row.broker_open_time).getTime()
+    : null;
+  const brokerCloseTime = row.broker_close_time
+    ? new Date(row.broker_close_time).getTime()
+    : null;
+  const holdTimeMs =
+    typeof row.hold_time_ms === "number" && row.hold_time_ms > 0
+      ? row.hold_time_ms
+      : brokerOpenTime != null && brokerCloseTime != null && brokerCloseTime > brokerOpenTime
+        ? brokerCloseTime - brokerOpenTime
+        : null;
   return {
     id: row.id,
     status: row.status,
@@ -77,6 +98,9 @@ function rowToTrade(row: TradeRow): Trade {
     source: row.source,
     clientOrderId: row.client_order_id ?? null,
     brokerOrderId: row.broker_order_id ?? null,
+    brokerOpenTime,
+    brokerCloseTime,
+    holdTimeMs,
     persisted: true,
   };
 }
@@ -227,6 +251,16 @@ export const useTradeStore = create<TradeStoreState>((set, get) => ({
               pnl,
               pnlPct,
               result,
+              // If the caller didn't supply a broker close time, fall back to
+              // "now" for trades that have a broker open time (best-effort
+              // hold-time estimate until the broker reports the real value).
+              brokerCloseTime:
+                t.brokerCloseTime ?? (t.brokerOpenTime != null ? Date.now() : null),
+              holdTimeMs:
+                t.holdTimeMs ??
+                (t.brokerOpenTime != null
+                  ? (t.brokerCloseTime ?? Date.now()) - t.brokerOpenTime
+                  : null),
             }
           : t,
       ),
@@ -236,6 +270,7 @@ export const useTradeStore = create<TradeStoreState>((set, get) => ({
     // Paper mode: update via browser client (best-effort).
     if (!hasServerSession()) {
       try {
+        const trade = get().trades.find((tt) => tt.id === id);
         const { error } = await supabase
           .from("trades")
           .update({
@@ -244,6 +279,10 @@ export const useTradeStore = create<TradeStoreState>((set, get) => ({
             pnl,
             pnl_pct: pnlPct,
             result,
+            broker_close_time: trade?.brokerCloseTime != null
+              ? new Date(trade.brokerCloseTime).toISOString()
+              : null,
+            hold_time_ms: trade?.holdTimeMs ?? null,
           })
           .eq("id", id);
         if (error) {
@@ -256,6 +295,7 @@ export const useTradeStore = create<TradeStoreState>((set, get) => ({
     }
 
     try {
+      const trade = get().trades.find((tt) => tt.id === id);
       const res = await fetch(`/api/trades/${encodeURIComponent(id)}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -265,6 +305,10 @@ export const useTradeStore = create<TradeStoreState>((set, get) => ({
           pnl,
           pnlPct,
           result,
+          brokerCloseTime: trade?.brokerCloseTime != null
+            ? new Date(trade.brokerCloseTime).toISOString()
+            : null,
+          holdTimeMs: trade?.holdTimeMs ?? null,
         }),
         cache: "no-store",
       });
@@ -352,6 +396,9 @@ function tradeToRow(t: Trade, userId: string | null): Omit<TradeRow, "created_at
     agent_id: t.agentId,
     source: t.source,
     user_id: userId,
+    broker_open_time: t.brokerOpenTime != null ? new Date(t.brokerOpenTime).toISOString() : null,
+    broker_close_time: t.brokerCloseTime != null ? new Date(t.brokerCloseTime).toISOString() : null,
+    hold_time_ms: t.holdTimeMs ?? null,
   };
 }
 
@@ -372,6 +419,9 @@ function tradeToRequestBody(t: Trade): Record<string, unknown> {
     agentId: t.agentId,
     source: t.source,
     brokerOrderId: t.brokerOrderId ?? null,
+    brokerOpenTime: t.brokerOpenTime != null ? new Date(t.brokerOpenTime).toISOString() : null,
+    brokerCloseTime: t.brokerCloseTime != null ? new Date(t.brokerCloseTime).toISOString() : null,
+    holdTimeMs: t.holdTimeMs ?? null,
   };
 }
 

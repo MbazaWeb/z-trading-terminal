@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import {
   getConnectedRpcConnection,
+  releaseRpcConnection,
   readMetaApiConfig,
   type MetaApiPosition,
 } from "@/lib/metaApiServer";
@@ -92,11 +93,7 @@ export async function GET() {
     );
   } finally {
     if (connection) {
-      try {
-        await connection.close();
-      } catch {
-        /* ignore */
-      }
+      await releaseRpcConnection(connection);
     }
   }
 }

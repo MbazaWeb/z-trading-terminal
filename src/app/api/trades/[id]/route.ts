@@ -30,6 +30,9 @@ interface PatchBody {
   pnlPct?: number;
   result?: "win" | "loss" | null;
   brokerOrderId?: string | null;
+  brokerOpenTime?: string | null;
+  brokerCloseTime?: string | null;
+  holdTimeMs?: number | null;
 }
 
 export async function PATCH(
@@ -69,6 +72,9 @@ export async function PATCH(
   if (typeof body.pnlPct === "number") update.pnl_pct = body.pnlPct;
   if (body.result !== undefined) update.result = body.result;
   if (body.brokerOrderId !== undefined) update.broker_order_id = body.brokerOrderId;
+  if (body.brokerOpenTime !== undefined) update.broker_open_time = body.brokerOpenTime;
+  if (body.brokerCloseTime !== undefined) update.broker_close_time = body.brokerCloseTime;
+  if (body.holdTimeMs !== undefined) update.hold_time_ms = body.holdTimeMs;
 
   if (Object.keys(update).length === 0) {
     return NextResponse.json(

@@ -13,10 +13,11 @@ import { LoginView } from "@/components/views/LoginView";
 import { useAuthStore } from "@/lib/authStore";
 import { useDerivCallback } from "@/lib/useDerivCallback";
 import { useTradeStore, computeAgentStats } from "@/lib/tradeStore";
-import { useBotStore, computeEquityPositionSize } from "@/lib/botStore";
+import { useBotStore } from "@/lib/botStore";
 import { useAgentStore } from "@/lib/agents/agentStore";
+import { calculatePerformance } from "@/lib/agents/performance";
+import type { AgentPerformance } from "@/lib/agents/types";
 import { computePositionProfit, STRATEGY_CONFIG } from "@/lib/strategy";
-import { fetchTicker } from "@/lib/binance";
 
 export default function Page() {
   // The shell owns the shared market-data instance so the top TickerTape and
@@ -84,17 +85,19 @@ export default function Page() {
     return () => clearInterval(id);
   }, [isAuthenticated, syncPendingTrades]);
 
-  // --- Agent stats sync: recompute winRate/pnl/sparkline from real trades ---
+  // --- Agent stats sync: recompute winRate/pnl/sparkline + performance from real trades ---
   const trades = useTradeStore((s) => s.trades);
   const syncAgentStats = useAgentStore((s) => s.syncStatsFromTrades);
   useEffect(() => {
     const agents = useAgentStore.getState().agents;
     const map = new Map<
       string,
-      { winRate: number; totalTrades: number; pnl: number; sparkline: number[] }
+      { winRate: number; totalTrades: number; pnl: number; sparkline: number[]; performance?: AgentPerformance }
     >();
     for (const a of agents) {
-      map.set(a.id, computeAgentStats(trades, a.id));
+      const base = computeAgentStats(trades, a.id);
+      const perf = calculatePerformance(trades, a.id);
+      map.set(a.id, { ...base, performance: perf });
     }
     syncAgentStats(map);
   }, [trades, syncAgentStats]);
@@ -108,11 +111,11 @@ export default function Page() {
   }, []);
 
   // --- Take-profit automation for manual (TradePanel) positions -------------
-  // For each open manual trade placed from the TradePanel, compute the live
-  // profit using the active symbol's live price. When the profit reaches the
-  // strategy take-profit target ($2.00), auto-close the position. If the
-  // trade has a brokerOrderId, call /api/mt5/close first and wait for broker
-  // confirmation before marking the trade as closed locally.
+  // The browser only manages TP automation for trades the user placed
+  // manually from the TradePanel (the $2 take-profit target from the Drop
+  // Catcher strategy). Bot-driven positions are managed server-side by the
+  // cron worker (/api/cron/bot) — no bot intervals run in the browser
+  // anymore.
   const activeSymbolLabelRef = useRef<string>(market.activeSymbol.label);
   const livePriceRef = useRef<number>(market.livePrice);
   useEffect(() => {
@@ -179,7 +182,7 @@ export default function Page() {
               } else {
                 botStore.addBotLog(
                   "INFO",
-                  `Broker close failed for ${t.market} — will retry next tick`,
+                  `Broker close failed for ${t.market} -- will retry next tick`,
                 );
               }
             });
@@ -197,251 +200,13 @@ export default function Page() {
     return () => clearInterval(id);
   }, []);
 
-  // --- Bot consensus automation: when the bot is running and a fresh
-  // consensus passes, open a position at the current live price. The agent
-  // store's runAnalysis runs from the TradePanel whenever fresh candles
-  // arrive; we read the latest consensus result here.
-  const viewRef = useRef<ViewId>(view);
-  useEffect(() => {
-    viewRef.current = view;
-  }, [view]);
-
-  useEffect(() => {
-    const id = setInterval(() => {
-      const botStore = useBotStore.getState();
-      if (!botStore.running) return;
-      const livePrice = livePriceRef.current;
-      const label = activeSymbolLabelRef.current;
-      if (livePrice <= 0) return;
-
-      const consensus = useAgentStore.getState().lastConsensus;
-      if (!consensus || !consensus.passed) return;
-      if (consensus.decision !== "buy" && consensus.decision !== "sell") return;
-
-      // Throttle: only place one trade per consensus timestamp.
-      const lastAnalyzedAt = useAgentStore.getState().lastAnalysisAt ?? 0;
-      const lastTradeAt = botStore.positions.length
-        ? Math.max(...botStore.positions.map((p) => p.openedAt))
-        : 0;
-      if (lastTradeAt >= lastAnalyzedAt) return;
-
-      const config = botStore.config;
-      if (botStore.positions.length >= config.maxConcurrentPositions) return;
-
-      // Daily loss guard.
-      const now = Date.now();
-      const dayStart = now - (now % 86_400_000);
-      const todayLoss = Math.abs(
-        useTradeStore
-          .getState()
-          .trades.filter(
-            (t) =>
-              t.status === "closed" &&
-              t.source === "bot" &&
-              t.datetime >= dayStart &&
-              t.pnl < 0,
-          )
-          .reduce((s, t) => s + t.pnl, 0),
-      );
-      if (todayLoss >= config.maxDailyLoss) {
-        botStore.addBotLog(
-          "RISK-CHECK",
-          `Daily loss limit $${config.maxDailyLoss} reached -- bot trade skipped`,
-        );
-        return;
-      }
-
-      // Equity-based position sizing: use the REAL account balance from the
-      // auth store, not a hardcoded $5000 fallback.
-      const accountBalance = useAuthStore.getState().accountInfo?.balance ?? null;
-      const positionSize = computeEquityPositionSize(accountBalance, config);
-      if (positionSize <= 0) {
-        botStore.addBotLog(
-          "RISK-CHECK",
-          "Account balance not available -- bot trade skipped (refresh balance from sidebar)",
-        );
-        return;
-      }
-
-      const side = consensus.decision;
-      const slPct = config.defaultStopLoss / 100;
-      const tpPct = config.defaultTakeProfit / 100;
-      const size = positionSize / livePrice;
-      const sl =
-        side === "buy" ? livePrice * (1 - slPct) : livePrice * (1 + slPct);
-      const tp =
-        side === "buy" ? livePrice * (1 + tpPct) : livePrice * (1 - tpPct);
-
-      const posId = `pos-${Date.now().toString(36)}-${Math.floor(Math.random() * 1e4).toString(36)}`;
-      const tradeId = `bot-${Date.now().toString(36)}-${Math.floor(Math.random() * 1e4).toString(36)}`;
-      const votingAgents = consensus.votes
-        .filter((v) => v.action === side)
-        .map((v) => v.agentId);
-
-      const trade = {
-        id: tradeId,
-        status: "open" as const,
-        datetime: now,
-        market: label,
-        side,
-        amount: positionSize,
-        entryPrice: livePrice,
-        exitPrice: null,
-        pnl: 0,
-        pnlPct: 0,
-        result: null,
-        agentId: votingAgents[0] ?? null,
-        source: "bot" as const,
-      };
-      void useTradeStore.getState().addTrade(trade);
-      botStore.openBotPosition(
-        {
-          id: posId,
-          tradeId,
-          symbol: label,
-          side,
-          size,
-          entryPrice: livePrice,
-          currentPrice: livePrice,
-          stopLoss: sl,
-          takeProfit: tp,
-          openedAt: now,
-          agentId: votingAgents[0] ?? null,
-        },
-        tradeId,
-      );
-      botStore.addBotLog(
-        "SIGNAL",
-        `Consensus ${side.toUpperCase()} ${label} @ ${livePrice} (${consensus.totalConfidence}% confidence, ${votingAgents.length} agents)`,
-      );
-      botStore.addBotLog(
-        "RISK-CHECK",
-        `Position $${positionSize.toFixed(2)} (balance $${accountBalance?.toFixed(2) ?? "n/a"} * ${config.riskPerTrade}%), SL ${config.defaultStopLoss}%, TP ${config.defaultTakeProfit}% -- APPROVED`,
-      );
-    }, 5000);
-    return () => clearInterval(id);
-  }, []);
-
-  // --- Bot position price refresh + SL/TP automation -----------------------
-  // For each open bot position, poll the live price from Binance (per symbol)
-  // and auto-close on SL/TP crossings. Broker-confirmed positions are closed
-  // via /api/mt5/close before being marked closed locally.
-  useEffect(() => {
-    const id = setInterval(async () => {
-      const botStore = useBotStore.getState();
-      const tradeStore = useTradeStore.getState();
-      if (botStore.positions.length === 0) return;
-
-      // Group positions by symbol so we only fetch each ticker once.
-      const bySymbol = new Map<string, typeof botStore.positions>();
-      for (const p of botStore.positions) {
-        const list = bySymbol.get(p.symbol) ?? [];
-        list.push(p);
-        bySymbol.set(p.symbol, list);
-      }
-
-      for (const [symbolLabel, positions] of bySymbol) {
-        // Look up the Binance symbol id by label (e.g. "BTC/USDT" -> "BTCUSDT").
-        const sym = [...market.symbols].find((s) => s.label === symbolLabel);
-        if (!sym) continue;
-        let price = 0;
-        try {
-          const ticker = await fetchTicker(sym.id);
-          price = ticker.lastPrice;
-        } catch {
-          continue;
-        }
-        if (price <= 0) continue;
-
-        for (const p of positions) {
-          botStore.updatePositionPrice(p.id, price);
-          // Check SL/TP.
-          if (p.side === "buy") {
-            if (price <= p.stopLoss) {
-              const size = p.size;
-              const pnl = computePositionProfit("buy", p.entryPrice, p.stopLoss, size);
-              const pnlPct = Math.round((pnl / (p.entryPrice * size)) * 10000) / 100;
-              botStore.closeBotPosition(p.id, p.stopLoss, "SL");
-              void tradeStore.closeTrade(
-                p.tradeId,
-                p.stopLoss,
-                pnl,
-                pnlPct,
-                pnl >= 0 ? "win" : "loss",
-              );
-              if (p.agentId) {
-                useAgentStore.getState().correctAfterTrade(
-                  pnl >= 0 ? "win" : "loss",
-                  [p.agentId],
-                  pnl,
-                );
-              }
-            } else if (price >= p.takeProfit) {
-              const size = p.size;
-              const pnl = computePositionProfit("buy", p.entryPrice, p.takeProfit, size);
-              const pnlPct = Math.round((pnl / (p.entryPrice * size)) * 10000) / 100;
-              botStore.closeBotPosition(p.id, p.takeProfit, "TP");
-              void tradeStore.closeTrade(
-                p.tradeId,
-                p.takeProfit,
-                pnl,
-                pnlPct,
-                pnl >= 0 ? "win" : "loss",
-              );
-              if (p.agentId) {
-                useAgentStore.getState().correctAfterTrade(
-                  pnl >= 0 ? "win" : "loss",
-                  [p.agentId],
-                  pnl,
-                );
-              }
-            }
-          } else {
-            if (price >= p.stopLoss) {
-              const size = p.size;
-              const pnl = computePositionProfit("sell", p.entryPrice, p.stopLoss, size);
-              const pnlPct = Math.round((pnl / (p.entryPrice * size)) * 10000) / 100;
-              botStore.closeBotPosition(p.id, p.stopLoss, "SL");
-              void tradeStore.closeTrade(
-                p.tradeId,
-                p.stopLoss,
-                pnl,
-                pnlPct,
-                pnl >= 0 ? "win" : "loss",
-              );
-              if (p.agentId) {
-                useAgentStore.getState().correctAfterTrade(
-                  pnl >= 0 ? "win" : "loss",
-                  [p.agentId],
-                  pnl,
-                );
-              }
-            } else if (price <= p.takeProfit) {
-              const size = p.size;
-              const pnl = computePositionProfit("sell", p.entryPrice, p.takeProfit, size);
-              const pnlPct = Math.round((pnl / (p.entryPrice * size)) * 10000) / 100;
-              botStore.closeBotPosition(p.id, p.takeProfit, "TP");
-              void tradeStore.closeTrade(
-                p.tradeId,
-                p.takeProfit,
-                pnl,
-                pnlPct,
-                pnl >= 0 ? "win" : "loss",
-              );
-              if (p.agentId) {
-                useAgentStore.getState().correctAfterTrade(
-                  pnl >= 0 ? "win" : "loss",
-                  [p.agentId],
-                  pnl,
-                );
-              }
-            }
-          }
-        }
-      }
-    }, 5000);
-    return () => clearInterval(id);
-  }, [market.symbols]);
+  // NOTE: Bot automation used to run here as two browser-side intervals
+  // (consensus -> open position; price poll -> SL/TP). Both have been
+  // removed in favor of the server-side cron worker at /api/cron/bot. The
+  // browser now only displays data fetched from the server (positions via
+  // /api/mt5/positions, logs via /api/bot/logs, config via /api/bot/config).
+  // The agent analysis display stays local so the Trading view can render
+  // signals without a round-trip — but no orders are placed from the browser.
 
   // --- Render shell ----------------------------------------------------------
   // Public dashboard access (FIX 9): when NOT authenticated, show the market

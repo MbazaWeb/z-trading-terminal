@@ -97,6 +97,9 @@ interface InsertBody {
   agentId?: string | null;
   source?: "manual" | "bot" | "agent" | "paper" | "seed";
   brokerOrderId?: string | null;
+  brokerOpenTime?: string | null;
+  brokerCloseTime?: string | null;
+  holdTimeMs?: number | null;
 }
 
 export async function POST(request: Request) {
@@ -164,6 +167,9 @@ export async function POST(request: Request) {
     source: body.source ?? "manual",
     client_order_id: clientOrderId ?? null,
     broker_order_id: body.brokerOrderId ?? null,
+    broker_open_time: body.brokerOpenTime ?? null,
+    broker_close_time: body.brokerCloseTime ?? null,
+    hold_time_ms: body.holdTimeMs ?? null,
     user_id: session.userId,
   };
 

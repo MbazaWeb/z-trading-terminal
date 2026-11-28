@@ -66,6 +66,35 @@ export function formatDuration(ms: number): string {
   return `${pad(h)}:${pad(m)}:${pad(s)}`;
 }
 
+/**
+ * Compact human-readable hold duration, e.g. "2m 15s", "1h 30m", "3d 4h".
+ * Returns "--" when ms is null/0/invalid.
+ */
+export function formatHoldDuration(ms: number | null | undefined): string {
+  if (ms == null || !Number.isFinite(ms) || ms <= 0) return "--";
+  const total = Math.floor(ms / 1000);
+  const days = Math.floor(total / 86_400);
+  const hours = Math.floor((total % 86_400) / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const seconds = total % 60;
+  if (days > 0) return `${days}d ${hours}h`;
+  if (hours > 0) return `${hours}h ${minutes}m`;
+  if (minutes > 0) return `${minutes}m ${seconds}s`;
+  return `${seconds}s`;
+}
+
+/**
+ * Format an ISO timestamp or epoch ms as "YYYY-MM-DD HH:MM". Returns "--" for
+ * null/undefined so trade log cells stay readable when broker timestamps
+ * aren't available (paper trades).
+ */
+export function formatTimestamp(value: number | string | null | undefined): string {
+  if (value == null) return "--";
+  const ms = typeof value === "number" ? value : new Date(value).getTime();
+  if (!Number.isFinite(ms)) return "--";
+  return formatDateTime(ms);
+}
+
 export function formatDate(ms: number): string {
   const d = new Date(ms);
   const pad = (n: number) => n.toString().padStart(2, "0");
@@ -96,6 +125,9 @@ export interface TradeCsvRow {
   result: "win" | "loss" | null;
   agentId: string | null;
   source: "seed" | "agent" | "bot" | "manual" | "paper";
+  brokerOpenTime?: number | null;
+  brokerCloseTime?: number | null;
+  holdTimeMs?: number | null;
 }
 
 export function tradesToCsv(trades: TradeCsvRow[]): string {
@@ -113,6 +145,9 @@ export function tradesToCsv(trades: TradeCsvRow[]): string {
     "Result",
     "Agent",
     "Source",
+    "Open Time",
+    "Close Time",
+    "Hold Duration",
   ];
   const rows = trades.map((t) =>
     [
@@ -129,6 +164,9 @@ export function tradesToCsv(trades: TradeCsvRow[]): string {
       t.result ?? "",
       t.agentId ?? "",
       t.source,
+      t.brokerOpenTime != null ? formatTimestamp(t.brokerOpenTime) : "",
+      t.brokerCloseTime != null ? formatTimestamp(t.brokerCloseTime) : "",
+      t.holdTimeMs != null ? formatHoldDuration(t.holdTimeMs) : "",
     ]
       .map(csvEscape)
       .join(","),

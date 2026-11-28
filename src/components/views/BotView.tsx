@@ -1,11 +1,12 @@
 "use client";
 
-import { memo, useMemo } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
   Activity,
   Clock,
   DollarSign,
+  Loader2,
   Radio,
   Shield,
   Target,
@@ -25,9 +26,16 @@ import {
   formatTime,
   priceDecimals,
 } from "@/lib/format";
-import { useBotStore, useBot } from "@/lib/botStore";
+import {
+  useBotStore,
+  useBot,
+  type BotPosition,
+  type BotLogEntry,
+  type BotConfig,
+} from "@/lib/botStore";
 import { useTrades } from "@/lib/tradeStore";
 import { useLastConsensus } from "@/lib/agents/agentStore";
+import { useAuthStore } from "@/lib/authStore";
 
 const TAG_COLORS: Record<string, string> = {
   SIGNAL: "text-[#4f9cf9]",
@@ -37,6 +45,32 @@ const TAG_COLORS: Record<string, string> = {
   "TAKE-PROFIT": "text-[var(--bull)]",
   INFO: "text-muted-foreground",
 };
+
+interface ServerBotConfig {
+  running: boolean;
+  active_symbol: string;
+  max_position_size: number;
+  max_daily_loss: number;
+  max_concurrent_positions: number;
+  default_stop_loss: number;
+  default_take_profit: number;
+  risk_per_trade: number;
+}
+
+interface BrokerPosition {
+  id: string;
+  symbol: string;
+  side: "buy" | "sell";
+  volume: number;
+  openPrice: number;
+  currentPrice: number;
+  profit: number;
+  swap?: number;
+  stopLoss?: number | null;
+  takeProfit?: number | null;
+  openedAt: number;
+  comment?: string | null;
+}
 
 function PerfCard({
   label,
@@ -95,12 +129,284 @@ export const BotView = memo(function BotView() {
   const bot = useBot();
   const trades = useTrades();
   const consensus = useLastConsensus();
-  const setBotRunning = useBotStore((s) => s.setBotRunning);
   const updateBotConfig = useBotStore((s) => s.updateBotConfig);
+  const setBotRunning = useBotStore((s) => s.setBotRunning);
+  const setPositions = useBotStore((s) => s.setPositions);
+  const setLogs = useBotStore((s) => s.setLogs);
   const closeBotPosition = useBotStore((s) => s.closeBotPosition);
+
+  const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
+  const accountType = useAuthStore((s) => s.accountType);
+
+  const [configLoading, setConfigLoading] = useState(true);
+  const [serverRunning, setServerRunning] = useState<boolean | null>(null);
+  const [toggling, setToggling] = useState(false);
+  const [positionsLoading, setPositionsLoading] = useState(false);
+  const [brokerPositions, setBrokerPositions] = useState<BrokerPosition[]>([]);
 
   const now = Date.now();
 
+  // --- Load bot config from /api/bot/config on mount ----------------------
+  const loadConfig = useCallback(async () => {
+    if (!isAuthenticated) {
+      setConfigLoading(false);
+      return;
+    }
+    try {
+      const res = await fetch("/api/bot/config", { cache: "no-store" });
+      if (!res.ok) return;
+      const data = (await res.json()) as { ok?: boolean; config?: ServerBotConfig };
+      if (data.config) {
+        updateBotConfig({
+          maxPositionSize: Number(data.config.max_position_size) || 500,
+          maxDailyLoss: Number(data.config.max_daily_loss) || 200,
+          maxConcurrentPositions:
+            Math.max(1, Math.floor(Number(data.config.max_concurrent_positions) || 5)),
+          defaultStopLoss: Number(data.config.default_stop_loss) || 1.5,
+          defaultTakeProfit: Number(data.config.default_take_profit) || 3.0,
+          riskPerTrade: Number(data.config.risk_per_trade) || 2,
+        });
+        setServerRunning(Boolean(data.config.running));
+        setBotRunning(Boolean(data.config.running));
+      }
+    } catch (err) {
+      console.warn("[BotView] loadConfig failed:", err);
+    } finally {
+      setConfigLoading(false);
+    }
+  }, [isAuthenticated, updateBotConfig, setBotRunning]);
+
+  useEffect(() => {
+    void loadConfig();
+  }, [loadConfig]);
+
+  // --- Persist config changes back to /api/bot/config (debounced) ----------
+  const configSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastConfigPush = useRef<string>("");
+  useEffect(() => {
+    if (configLoading) return;
+    if (!isAuthenticated) return;
+    const snapshot = JSON.stringify({
+      maxPositionSize: bot.config.maxPositionSize,
+      maxDailyLoss: bot.config.maxDailyLoss,
+      maxConcurrentPositions: bot.config.maxConcurrentPositions,
+      defaultStopLoss: bot.config.defaultStopLoss,
+      defaultTakeProfit: bot.config.defaultTakeProfit,
+      riskPerTrade: bot.config.riskPerTrade,
+    });
+    if (snapshot === lastConfigPush.current) return;
+    if (configSaveTimer.current) clearTimeout(configSaveTimer.current);
+    configSaveTimer.current = setTimeout(async () => {
+      lastConfigPush.current = snapshot;
+      try {
+        await fetch("/api/bot/config", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            maxPositionSize: bot.config.maxPositionSize,
+            maxDailyLoss: bot.config.maxDailyLoss,
+            maxConcurrentPositions: bot.config.maxConcurrentPositions,
+            defaultStopLoss: bot.config.defaultStopLoss,
+            defaultTakeProfit: bot.config.defaultTakeProfit,
+            riskPerTrade: bot.config.riskPerTrade,
+          }),
+          cache: "no-store",
+        });
+      } catch (err) {
+        console.warn("[BotView] config save failed:", err);
+      }
+    }, 800);
+    return () => {
+      if (configSaveTimer.current) clearTimeout(configSaveTimer.current);
+    };
+  }, [bot.config, isAuthenticated, configLoading]);
+
+  // --- Fetch open positions every 10s from /api/mt5/positions (or /api/trades) --
+  const loadPositions = useCallback(async () => {
+    if (!isAuthenticated) return;
+    setPositionsLoading(true);
+    try {
+      // Try MetaApi first; fall back to /api/trades?status=open when MetaApi
+      // is not configured (paper / demo-only users).
+      let positions: BrokerPosition[] = [];
+      try {
+        const res = await fetch("/api/mt5/positions", { cache: "no-store" });
+        if (res.ok) {
+          const data = (await res.json()) as {
+            configured?: boolean;
+            positions?: BrokerPosition[];
+          };
+          if (data.configured !== false && Array.isArray(data.positions)) {
+            positions = data.positions;
+          }
+        }
+      } catch {
+        // fall through to /api/trades
+      }
+      if (positions.length === 0) {
+        // Fallback: derive "open positions" from local trades.
+        positions = trades
+          .filter((t) => t.status === "open")
+          .map((t) => {
+            const size = t.entryPrice > 0 ? t.amount / t.entryPrice : 0;
+            return {
+              id: t.brokerOrderId ?? t.id,
+              symbol: t.market,
+              side: t.side,
+              volume: size,
+              openPrice: t.entryPrice,
+              currentPrice: t.entryPrice,
+              profit: 0,
+              openedAt: t.datetime,
+              stopLoss: null,
+              takeProfit: null,
+            };
+          });
+      }
+      setBrokerPositions(positions);
+      // Mirror into the bot store so the rest of the UI (e.g. exposure
+      // calc) keeps working without touching botStore internals.
+      const mapped: BotPosition[] = positions.map((p) => ({
+        id: p.id,
+        tradeId: p.id,
+        symbol: p.symbol,
+        side: p.side,
+        size: p.volume,
+        entryPrice: p.openPrice,
+        currentPrice: p.currentPrice,
+        stopLoss: p.stopLoss ?? 0,
+        takeProfit: p.takeProfit ?? 0,
+        openedAt: p.openedAt,
+        agentId: null,
+      }));
+      setPositions(mapped);
+    } catch (err) {
+      console.warn("[BotView] loadPositions failed:", err);
+    } finally {
+      setPositionsLoading(false);
+    }
+  }, [isAuthenticated, trades, setPositions]);
+
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    void loadPositions();
+    const id = setInterval(() => {
+      void loadPositions();
+    }, 10_000);
+    return () => clearInterval(id);
+  }, [isAuthenticated, loadPositions]);
+
+  // --- Fetch bot activity logs every 10s from /api/bot/logs ----------------
+  const loadLogs = useCallback(async () => {
+    if (!isAuthenticated) return;
+    try {
+      const res = await fetch("/api/bot/logs?limit=100", { cache: "no-store" });
+      if (!res.ok) return;
+      const data = (await res.json()) as {
+        ok?: boolean;
+        logs?: Array<{
+          id: string;
+          timestamp: string;
+          tag: BotLogEntry["tag"];
+          message: string;
+        }>;
+      };
+      if (data.ok && Array.isArray(data.logs)) {
+        const mapped: BotLogEntry[] = data.logs.map((l) => ({
+          id: l.id,
+          timestamp: new Date(l.timestamp).getTime(),
+          tag: l.tag,
+          message: l.message,
+        }));
+        setLogs(mapped);
+      }
+    } catch (err) {
+      console.warn("[BotView] loadLogs failed:", err);
+    }
+  }, [isAuthenticated, setLogs]);
+
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    void loadLogs();
+    const id = setInterval(() => {
+      void loadLogs();
+    }, 10_000);
+    return () => clearInterval(id);
+  }, [isAuthenticated, loadLogs]);
+
+  // --- Start/Stop handler: POST running state to /api/bot/config -----------
+  const handleToggleRunning = useCallback(async () => {
+    if (toggling) return;
+    const next = !bot.running;
+    setToggling(true);
+    // Optimistically flip the local state so the button reflects immediately.
+    setBotRunning(next);
+    try {
+      const res = await fetch("/api/bot/config", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ running: next }),
+        cache: "no-store",
+      });
+      if (!res.ok) {
+        const err = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(err.error ?? `HTTP ${res.status}`);
+      }
+      setServerRunning(next);
+      toast.success(next ? "Bot started" : "Bot stopped", {
+        description: next
+          ? "Cron worker will pick up signals on the next cycle."
+          : "No new orders will be placed. Open positions remain until SL/TP.",
+      });
+    } catch (err) {
+      // Revert optimistic flip.
+      setBotRunning(!next);
+      toast.error("Failed to toggle bot", {
+        description: err instanceof Error ? err.message : String(err),
+      });
+    } finally {
+      setToggling(false);
+    }
+  }, [bot.running, toggling, setBotRunning]);
+
+  // --- Manual close handler: POST to /api/mt5/close ------------------------
+  const handleClose = useCallback(
+    async (positionId: string) => {
+      const pos = brokerPositions.find((p) => p.id === positionId);
+      if (!pos) return;
+      try {
+        const res = await fetch("/api/mt5/close", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ positionId }),
+          cache: "no-store",
+        });
+        if (!res.ok) {
+          const err = (await res.json().catch(() => ({}))) as { error?: string };
+          throw new Error(err.error ?? `HTTP ${res.status}`);
+        }
+        closeBotPosition(positionId, pos.currentPrice, "manual");
+        toast("Position closed manually", {
+          description: `${pos.symbol} @ ${formatPrice(pos.currentPrice)}`,
+        });
+        // Refresh positions immediately so the table reflects the close.
+        void loadPositions();
+      } catch (err) {
+        // Paper / local-only trade — close locally.
+        closeBotPosition(positionId, pos.currentPrice, "manual");
+        toast("Position closed locally", {
+          description: err instanceof Error ? err.message : String(err),
+        });
+      }
+    },
+    [brokerPositions, closeBotPosition, loadPositions],
+  );
+
+  function handleKill() {
+    void handleToggleRunning();
+  }
+
+  // --- Derived metrics -----------------------------------------------------
   const todayLoss = useMemo(() => {
     const start = now - DAY_MS;
     return Math.abs(
@@ -143,11 +449,28 @@ export const BotView = memo(function BotView() {
   }, [autoTradesToday]);
 
   const avgDuration = useMemo(() => {
-    const closed = autoTradesToday.filter((t) => t.status === "closed");
-    if (closed.length === 0) return 0;
-    // Realistic estimate: average hold time is roughly 4-8 minutes per
-    // position depending on volatility.
-    return 4 * 60 * 1000 + (closed.length % 5) * 60 * 1000;
+    const closed = autoTradesToday.filter(
+      (t) => t.status === "closed" && typeof t.holdTimeMs === "number",
+    );
+    if (closed.length === 0) {
+      // Fall back to broker_close_time - broker_open_time when holdTimeMs
+      // isn't populated.
+      const tsBased = autoTradesToday.filter(
+        (t) =>
+          t.status === "closed" &&
+          typeof t.brokerOpenTime === "number" &&
+          typeof t.brokerCloseTime === "number",
+      );
+      if (tsBased.length === 0) return 0;
+      const sum = tsBased.reduce(
+        (s, t) =>
+          s + ((t.brokerCloseTime ?? 0) - (t.brokerOpenTime ?? 0)),
+        0,
+      );
+      return Math.round(sum / tsBased.length);
+    }
+    const sum = closed.reduce((s, t) => s + (t.holdTimeMs ?? 0), 0);
+    return Math.round(sum / closed.length);
   }, [autoTradesToday]);
 
   const exposure = bot.positions.reduce(
@@ -158,23 +481,9 @@ export const BotView = memo(function BotView() {
   const uptime =
     bot.running && bot.startedAt != null ? now - bot.startedAt : 0;
 
-  const lossRatio = todayLoss / bot.config.maxDailyLoss;
+  const lossRatio = bot.config.maxDailyLoss > 0 ? todayLoss / bot.config.maxDailyLoss : 0;
 
-  function handleClose(posId: string) {
-    const pos = bot.positions.find((p) => p.id === posId);
-    if (!pos) return;
-    closeBotPosition(posId, pos.currentPrice, "manual");
-    toast("Position closed manually", {
-      description: `${pos.symbol} @ ${formatPrice(pos.currentPrice)}`,
-    });
-  }
-
-  function handleKill() {
-    setBotRunning(false);
-    toast.error("Kill switch activated", {
-      description: "Bot stopped immediately. All automation halted.",
-    });
-  }
+  const livePositions = brokerPositions.length > 0 ? brokerPositions : [];
 
   return (
     <div className="mx-auto w-full max-w-[1600px] px-3 py-4 sm:px-5 sm:py-6">
@@ -185,8 +494,8 @@ export const BotView = memo(function BotView() {
               Autonomous Trading Bot
             </h1>
             <p className="mt-0.5 text-xs text-muted-foreground">
-              Risk-managed auto-execution driven by agent consensus on live
-              Binance data.
+              Server-driven cron worker. Risk-managed auto-execution on agent
+              consensus. No browser intervals.
             </p>
           </div>
         </div>
@@ -216,16 +525,26 @@ export const BotView = memo(function BotView() {
               />
             </span>
             {bot.running ? "Running" : "Stopped"}
+            {serverRunning === false && bot.running && (
+              <span className="ml-1 text-[9px] opacity-70">(local only)</span>
+            )}
           </span>
           <Button
-            onClick={() => setBotRunning(!bot.running)}
+            onClick={handleToggleRunning}
+            disabled={toggling || configLoading}
             className={
               bot.running
                 ? "bg-[var(--bear)] text-white hover:bg-[var(--bear)]/90"
                 : "bg-[var(--bull)] text-[#0a0e17] hover:bg-[var(--bull)]/90"
             }
           >
-            {bot.running ? "Stop Bot" : "Start Bot"}
+            {toggling ? (
+              <Loader2 className="size-4 animate-spin" />
+            ) : bot.running ? (
+              "Stop Bot"
+            ) : (
+              "Start Bot"
+            )}
           </Button>
         </div>
       </header>
@@ -252,6 +571,9 @@ export const BotView = memo(function BotView() {
                 Uptime {formatDuration(uptime)}
               </span>
             </div>
+            <div className="text-[10px] text-muted-foreground">
+              Cron schedule: <span className="font-mono">0 * * * *</span> (hourly on Vercel Hobby; <span className="font-mono">* * * * *</span> on Pro)
+            </div>
           </div>
 
           {/* Center: metrics */}
@@ -259,13 +581,16 @@ export const BotView = memo(function BotView() {
             <div className="flex items-center justify-between text-sm">
               <span className="text-muted-foreground">Trades placed today</span>
               <span className="font-mono font-bold text-foreground tabular-nums">
-                {bot.tradesPlacedToday}
+                {autoTradesToday.length}
               </span>
             </div>
             <div className="flex items-center justify-between text-sm">
               <span className="text-muted-foreground">Open positions</span>
               <span className="font-mono font-bold text-foreground tabular-nums">
-                {bot.positions.length} / {bot.config.maxConcurrentPositions}
+                {livePositions.length} / {bot.config.maxConcurrentPositions}
+                {positionsLoading && (
+                  <Loader2 className="ml-1 inline size-3 animate-spin align-middle" />
+                )}
               </span>
             </div>
             <div className="flex items-center justify-between text-sm">
@@ -471,12 +796,15 @@ export const BotView = memo(function BotView() {
             <h2 className="text-xs font-semibold uppercase tracking-wider text-foreground">
               Live Activity
             </h2>
+            <span className="ml-auto text-[10px] text-muted-foreground">
+              from /api/bot/logs (polls every 10s)
+            </span>
           </div>
           <div className="relative max-h-[420px] min-h-[260px] flex-1 overflow-y-auto pr-1">
             {bot.log.length === 0 && (
               <div className="flex h-full min-h-[200px] items-center justify-center text-xs text-muted-foreground">
                 No activity yet. Start the bot to begin consensus-driven
-                trading.
+                trading. The cron worker writes log entries on every cycle.
               </div>
             )}
             {bot.log.map((entry) => (
@@ -519,7 +847,10 @@ export const BotView = memo(function BotView() {
             Open Positions
           </h2>
           <span className="text-[10px] text-muted-foreground">
-            {bot.positions.length} live
+            {livePositions.length} live
+            {positionsLoading && (
+              <Loader2 className="ml-1 inline size-3 animate-spin align-middle" />
+            )}
           </span>
         </div>
         <div className="overflow-x-auto">
@@ -539,31 +870,33 @@ export const BotView = memo(function BotView() {
               </tr>
             </thead>
             <tbody>
-              {bot.positions.length === 0 && (
+              {livePositions.length === 0 && (
                 <tr>
                   <td colSpan={10} className="px-3 py-8 text-center text-muted-foreground">
                     No open positions. The bot will open positions automatically
-                    when consensus passes.
+                    when consensus passes on the next cron cycle.
                   </td>
                 </tr>
               )}
-              {bot.positions.map((p) => {
+              {livePositions.map((p) => {
                 const dir = p.side === "buy" ? 1 : -1;
                 const pnl =
                   Math.round(
-                    (p.currentPrice - p.entryPrice) * dir * p.size * 100,
+                    (p.currentPrice - p.openPrice) * dir * p.volume * 100,
                   ) / 100;
                 const pnlPct =
                   Math.round(
-                    ((p.currentPrice - p.entryPrice) / p.entryPrice) *
+                    ((p.currentPrice - p.openPrice) / p.openPrice) *
                       dir *
                       10000,
                   ) / 100;
-                const decimals = priceDecimals(p.currentPrice || p.entryPrice);
+                const decimals = priceDecimals(p.currentPrice || p.openPrice);
                 const nearSl =
-                  p.side === "buy"
-                    ? p.currentPrice <= p.stopLoss * 1.005
-                    : p.currentPrice >= p.stopLoss * 0.995;
+                  p.stopLoss != null
+                    ? p.side === "buy"
+                      ? p.currentPrice <= p.stopLoss * 1.005
+                      : p.currentPrice >= p.stopLoss * 0.995
+                    : false;
                 return (
                   <tr
                     key={p.id}
@@ -586,10 +919,10 @@ export const BotView = memo(function BotView() {
                       {p.side === "buy" ? "Buy" : "Sell"}
                     </td>
                     <td className="px-3 py-2 text-right font-mono tabular-nums">
-                      {p.size.toFixed(4)}
+                      {p.volume.toFixed(4)}
                     </td>
                     <td className="px-3 py-2 text-right font-mono tabular-nums">
-                      {formatPrice(p.entryPrice, decimals)}
+                      {formatPrice(p.openPrice, decimals)}
                     </td>
                     <td className="px-3 py-2 text-right font-mono tabular-nums">
                       {formatPrice(p.currentPrice, decimals)}
@@ -607,10 +940,10 @@ export const BotView = memo(function BotView() {
                       </span>
                     </td>
                     <td className="px-3 py-2 text-right font-mono tabular-nums text-[var(--bear)]">
-                      {formatPrice(p.stopLoss, decimals)}
+                      {p.stopLoss != null ? formatPrice(p.stopLoss, decimals) : "--"}
                     </td>
                     <td className="px-3 py-2 text-right font-mono tabular-nums text-[var(--bull)]">
-                      {formatPrice(p.takeProfit, decimals)}
+                      {p.takeProfit != null ? formatPrice(p.takeProfit, decimals) : "--"}
                     </td>
                     <td className="px-3 py-2 text-right font-mono text-[10px] text-muted-foreground tabular-nums">
                       {formatTime(p.openedAt)}
@@ -649,15 +982,24 @@ export const BotView = memo(function BotView() {
         />
         <PerfCard
           label="Avg Trade Duration"
-          value={formatDuration(avgDuration)}
+          value={avgDuration > 0 ? formatDuration(avgDuration) : "--"}
           icon={Timer}
         />
         <PerfCard
           label="Total Auto-Trades"
-          value={String(bot.tradesPlacedToday)}
+          value={String(autoTradesToday.length)}
           icon={Target}
         />
       </div>
+
+      {/* Account-type notice */}
+      {accountType === "real" && (
+        <div className="mt-4 rounded-lg border border-[var(--bear)]/40 bg-[var(--bear)]/[0.06] p-3 text-[11px] text-muted-foreground">
+          Real-account mode: the cron worker will not place broker orders
+          unless <span className="font-mono text-[var(--bear)]">REAL_TRADING_ENABLED=true</span> is
+          set on the server. Existing positions are still monitored for SL/TP.
+        </div>
+      )}
     </div>
   );
 });

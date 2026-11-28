@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import {
   getConnectedRpcConnection,
+  releaseRpcConnection,
   readMetaApiConfig,
 } from "@/lib/metaApiServer";
 import { requireAuth, authErrorResponse } from "@/lib/auth/session";
@@ -67,11 +68,7 @@ export async function GET() {
     );
   } finally {
     if (connection) {
-      try {
-        await connection.close();
-      } catch {
-        /* ignore */
-      }
+      await releaseRpcConnection(connection);
     }
   }
 }

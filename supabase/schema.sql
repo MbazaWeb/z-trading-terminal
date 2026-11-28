@@ -34,6 +34,16 @@ create table if not exists public.app_users (
 -- broker_order_id: the order id returned by the broker (MetaApi / Deriv)
 --   when the trade was placed. NULL for paper trades (no broker round-trip).
 --
+-- broker_open_time / broker_close_time: timestamps reported by the broker
+--   (MetaApi response.openTime / position.time and the close confirmation).
+--   NULL for paper trades. Used to compute the actual hold duration in
+--   ReportsView and the avgHoldTimeMs metric in the agent performance
+--   rollup (ZT-14).
+--
+-- hold_time_ms: cached broker_close_time - broker_open_time, populated when
+--   the position is closed. Stored as bigint so it can hold multi-hour
+--   durations without overflow.
+--
 -- source: 'paper' is a new value added in the consolidated remediation to
 --   distinguish local-only simulation trades from real broker trades.
 -- ===========================================================================
@@ -53,9 +63,18 @@ create table if not exists public.trades (
   source text not null default 'manual' check (source in ('seed', 'agent', 'bot', 'manual', 'paper')),
   client_order_id text,
   broker_order_id text,
+  broker_open_time timestamptz,
+  broker_close_time timestamptz,
+  hold_time_ms bigint,
   user_id uuid references public.app_users(id) on delete set null,
   created_at timestamptz default now()
 );
+
+-- Add the broker timestamp columns to existing deployments (no-op on fresh
+-- installs because the table was created with them above).
+alter table public.trades add column if not exists broker_open_time timestamptz;
+alter table public.trades add column if not exists broker_close_time timestamptz;
+alter table public.trades add column if not exists hold_time_ms bigint;
 
 -- Unique constraint on client_order_id prevents duplicate inserts at the
 -- database level (defense in depth — the application also checks).
