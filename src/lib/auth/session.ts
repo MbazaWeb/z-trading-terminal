@@ -28,8 +28,7 @@ const SIGNING_KEY = SESSION_SECRET || FALLBACK_SECRET || "";
 
 if (!SESSION_SECRET && process.env.NODE_ENV === "production") {
   console.error(
-    "[session] SESSION_SECRET is not set in production. Sessions will be " +
-      "signed with an empty key, which is insecure. Set SESSION_SECRET to a " +
+    "[session] SESSION_SECRET is not set in production. Broker session signing is disabled. Set SESSION_SECRET to a " +
       "32+ byte random string.",
   );
 }
@@ -68,8 +67,8 @@ function decodeSession(raw: string): SessionData | null {
   if (!b64 || !sig) return null;
 
   // Constant-time signature comparison to avoid timing attacks.
-  const expected = sign(b64);
   try {
+    const expected = sign(b64);
     const a = Buffer.from(sig, "base64url");
     const b = Buffer.from(expected, "base64url");
     if (a.length !== b.length || !timingSafeEqual(a, b)) return null;
@@ -152,7 +151,8 @@ export async function getSession(): Promise<SessionData | null> {
 
   const store = await cookies();
   const raw = store.get(SESSION_COOKIE)?.value;
-  const broker = raw ? decodeSession(raw) : null;
+  const decoded = raw ? decodeSession(raw) : null;
+  const broker = decoded?.userId === String(data.claims.sub) ? decoded : null;
   return {
     userId: String(data.claims.sub),
     provider: broker?.provider,
@@ -202,10 +202,10 @@ export async function requireAuth(): Promise<SessionData> {
  * treated as admin (sufficient for single-user dev deployments).
  */
 export async function requireAdmin(): Promise<SessionData> {
-  // Broker operations require both an authenticated application user and a
-  // verified broker account owned by that user. This legacy env-owner check
-  // is intentionally not used for application authorization.
-  return requireAuth();
+  const session = await requireAuth();
+  const owner = process.env.ZT_OWNER_USER_ID?.trim();
+  if (!owner || session.userId !== owner) throw new AuthError("Administrator required", 403);
+  return session;
 }
 
 /**
