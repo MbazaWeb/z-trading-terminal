@@ -63,3 +63,19 @@ server.log
 /mini-services/
 /db/
 /Caddyfile
+
+# Local secrets and Python caches
+.env.local
+.env.*.local
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Local secrets and Python caches
+.env.local
+.env.*.local
+__pycache__/
+*.pyc
+.venv/
+venv/

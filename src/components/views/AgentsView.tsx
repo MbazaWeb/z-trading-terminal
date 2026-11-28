@@ -132,8 +132,11 @@ function BacktestModal({
 
   useEffect(() => {
     if (!open) {
-      setResult(null);
-      setError(null);
+      const timer = setTimeout(() => {
+        setResult(null);
+        setError(null);
+      }, 0);
+      return () => clearTimeout(timer);
     }
   }, [open]);
 

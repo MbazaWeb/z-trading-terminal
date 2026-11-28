@@ -177,7 +177,10 @@ export const BotView = memo(function BotView() {
   }, [isAuthenticated, updateBotConfig, setBotRunning]);
 
   useEffect(() => {
-    void loadConfig();
+    const timer = setTimeout(() => {
+      void loadConfig();
+    }, 0);
+    return () => clearTimeout(timer);
   }, [loadConfig]);
 
   // --- Persist config changes back to /api/bot/config (debounced) ----------
@@ -289,11 +292,16 @@ export const BotView = memo(function BotView() {
 
   useEffect(() => {
     if (!isAuthenticated) return;
-    void loadPositions();
+    const initial = setTimeout(() => {
+      void loadPositions();
+    }, 0);
     const id = setInterval(() => {
       void loadPositions();
     }, 10_000);
-    return () => clearInterval(id);
+    return () => {
+      clearTimeout(initial);
+      clearInterval(id);
+    };
   }, [isAuthenticated, loadPositions]);
 
   // --- Fetch bot activity logs every 10s from /api/bot/logs ----------------

@@ -102,7 +102,7 @@ interface AuthState {
 // Demo accounts use a fixed $10,000 VIRTUAL balance (clearly labeled). This
 // is the ONLY balance the client sets without an upstream fetch — and it is
 // explicitly marked as virtual so it's never confused with real money.
-const DEMO_BALANCE = 10_000;
+
 
 const ENV_MT5_LOGIN =
   process.env.NEXT_PUBLIC_MT5_LOGIN ?? process.env.MT5_LOGIN;
@@ -121,7 +121,7 @@ const DEFAULT_STATE = {
   accessToken: null as string | null,
   userId: null as string | null,
   // Default to REAL account — demo is opt-in for training only.
-  pendingAccountType: "real" as PendingAccountType | null,
+  pendingAccountType: "demo" as PendingAccountType | null,
   _hasHydrated: false,
 };
 
@@ -246,7 +246,7 @@ export const useAuthStore = create<AuthState>()(
       },
 
       loginWithMetaTrader: (loginid, accountType) => {
-        const isDemo = accountType === "demo";
+        
         const envLogin = ENV_MT5_LOGIN ? `MT5-${ENV_MT5_LOGIN}` : null;
         const resolvedLoginid = loginid?.trim()
           ? loginid
@@ -265,8 +265,8 @@ export const useAuthStore = create<AuthState>()(
             currency: "USD",
             // NO fabricated balance — demo accounts get the virtual $10,000,
             // real accounts stay null until /api/mt5/balance resolves.
-            balance: isDemo ? DEMO_BALANCE : null,
-            balanceStatus: isDemo ? "ok" : "loading",
+            balance: null,
+            balanceStatus: "loading",
             email: MT5_EMAIL,
             name: `${MT5_NAME}${serverSuffix}`,
           },
@@ -282,8 +282,8 @@ export const useAuthStore = create<AuthState>()(
             tradingMode,
             accountInfo: {
               ...info,
-              balance: t === "demo" ? DEMO_BALANCE : info.balance,
-              balanceStatus: t === "demo" ? "ok" : info.balanceStatus,
+              balance: null,
+              balanceStatus: "loading",
             },
           });
         } else {
@@ -317,10 +317,7 @@ export const useAuthStore = create<AuthState>()(
         const state = get();
         if (!state.isAuthenticated || !state.accountInfo) return;
         // Demo accounts use a fixed $10,000 virtual balance — no fetch.
-        if (state.accountType === "demo") {
-          get().updateAccountInfo({ balance: DEMO_BALANCE, balanceStatus: "ok" });
-          return;
-        }
+        
 
         // Paper mode: no broker — leave balance as-is (null for real accounts
         // until they switch to demo/real broker mode).

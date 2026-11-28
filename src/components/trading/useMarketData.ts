@@ -151,8 +151,10 @@ export function useMarketData(initialSymbolId = "BTCUSDT"): MarketState {
   // book, and recent trades in parallel.
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
     async function load() {
+      await Promise.resolve();
+      if (cancelled) return;
+      setLoading(true);
       try {
         const [c, t, ob, rt] = await Promise.all([
           fetchCandles(activeSymbol.id, timeframe, 150),
