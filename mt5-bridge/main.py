@@ -315,3 +315,25 @@ def submit_demo_order(order: SubmissionRequest):
                 raise HTTPException(422, "Broker rejected order check")
             # No reservation or broker side effect while release is disabled.
             raise HTTPException(503, "Native submission release gate closed")
+
+@app.get("/risk-specs", dependencies=[Depends(authenticate)])
+def risk_specs(symbol: str):
+    with broker() as account:
+        if not mt5.symbol_select(symbol, True):
+            raise HTTPException(404, "Symbol unavailable")
+        info = mt5.symbol_info(symbol)
+        if info is None or info.trade_mode != mt5.SYMBOL_TRADE_MODE_FULL:
+            raise HTTPException(503, "Symbol unavailable")
+        values = {"tickSize": info.trade_tick_size,
+                  "lossTickValue": info.trade_tick_value_loss,
+                  "minVolume": info.volume_min, "maxVolume": info.volume_max,
+                  "volumeStep": info.volume_step, "point": info.point,
+                  "contractSize": info.trade_contract_size}
+        if not all(math.isfinite(v) and v > 0 for v in values.values()):
+            raise HTTPException(503, "Invalid broker specifications")
+        if info.volume_max < info.volume_min or info.trade_stops_level < 0:
+            raise HTTPException(503, "Invalid broker constraints")
+        return {**values, "symbol": symbol, "currency": account.currency,
+                "login": str(account.login), "server": account.server,
+                "minStopDistance": info.trade_stops_level * info.point,
+                "observedAt": int(time.time() * 1000), "accountType": "demo"}
