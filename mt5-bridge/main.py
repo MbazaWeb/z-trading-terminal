@@ -313,9 +313,5 @@ def submit_demo_order(order: SubmissionRequest):
             check = mt5.order_check(request)
             if check is None or check.retcode != 0:
                 raise HTTPException(422, "Broker rejected order check")
-            fingerprint = hashlib.sha256(json.dumps(request, sort_keys=True).encode()).hexdigest()
-            rid = str(order.requestId)
-            reserve_request(ledger, rid, f"{account.server}:{account.login}", fingerprint)
-            # Release gate intentionally closed until end-to-end tests pass.
-            record_outcome(ledger, rid, None)
-            return {"status": "unknown", "requestId": rid, "reason": "Transport release gate closed"}
+            # No reservation or broker side effect while release is disabled.
+            raise HTTPException(503, "Native submission release gate closed")
