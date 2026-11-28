@@ -3,9 +3,9 @@ import type { PrismaClient } from "@prisma/client";
 import type { SessionData } from "@/lib/auth/session";
 import { getBrokerSnapshot } from "./brokerRouter";
 import { getAIControls } from "./controlStore";
+import { nativeConsensus } from "@/lib/agents/nativeConsensus";
 
-// Do not fabricate 24-hour statistics or substitute tick counts for traded volume.
-// Until agent inputs support missing statistics, return an explicit non-executable hold.
+// Native strategies use closed prices without fabricated volume statistics.
 export async function analyzeBrokerMarket(db: PrismaClient, session: SessionData, symbol: string) {
   const controls = await getAIControls(db, session.userId);
   if (!controls.running || controls.emergencyStop) {
@@ -16,7 +16,9 @@ export async function analyzeBrokerMarket(db: PrismaClient, session: SessionData
   if (!current.running || current.emergencyStop || current.revision !== controls.revision) {
     return { action: "HOLD" as const, reason: "AI controls changed", executable: false as const };
   }
-  return { action: "HOLD" as const, reason: "Agent ticker statistics require native 24-hour history",
+  const consensus = nativeConsensus({provider:"mt5",symbol:market.symbol,observedAt:market.observedAt,
+    candles:market.candles,volumeType:market.volumeType,quote:{kind:"bid_ask",bid:market.bid,ask:market.ask}},current.enabledAgentIds);
+  return { action: "HOLD" as const, reason: "Independent native risk validation pending", consensus,
     executable: false as const, market: { symbol: market.symbol, bid: market.bid,
       ask: market.ask, spread: market.spread, observedAt: market.observedAt,
       closedCandles: market.candles.length, volumeType: market.volumeType } };
