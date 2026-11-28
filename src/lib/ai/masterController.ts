@@ -1,8 +1,9 @@
 import type { PrismaClient } from "@prisma/client";
 import type { Candle, TickerStats } from "@/components/trading/types";
-import { runAllAgentsAnalysis, AGENT_REGISTRY } from "@/lib/agents/registry";
+import { AGENT_REGISTRY } from "@/lib/agents/registry";
 import type { AgentSignal } from "@/lib/agents/types";
 import { analyzeEvidence } from "./client";
+import { coordinateAgents } from "./agentCoordinator";
 
 const specialists = new Set(["risk", "stopLoss", "stopWin", "pip", "alert"]);
 export function gateSignals(signals: AgentSignal[], now: number) {
@@ -24,14 +25,15 @@ export function gateSignals(signals: AgentSignal[], now: number) {
 
 // Internal advisory only. Caller must supply verified broker data, not browser input.
 export async function evaluateMarket(db: PrismaClient, market: {
-  symbol: string; observedAt: number; marketOpen: boolean; candles: Candle[]; ticker: TickerStats;
+  symbol: string; observedAt: number; marketOpen: boolean; candles: Candle[]; ticker: TickerStats; enabledAgentIds: readonly string[];
 }) {
   const now = Date.now();
   const hold = (reason: string) => ({ action: "HOLD" as const, reason, executable: false as const });
   if (!market.marketOpen || !Number.isFinite(market.observedAt) || market.observedAt > now ||
       now - market.observedAt > 60000 || market.candles.length < 50 ||
       !Number.isFinite(market.ticker.lastPrice) || market.ticker.lastPrice <= 0) return hold("Market data unavailable or stale");
-  const signals = runAllAgentsAnalysis(market.candles, market.ticker);
+  const { signals, riskReady } = coordinateAgents(market.candles, market.ticker, market.enabledAgentIds);
+  if (!riskReady) return hold("Required risk agents unavailable");
   const candidate = gateSignals(signals, Date.now());
   if (candidate === "HOLD") return hold("Insufficient consensus or elevated risk");
   const evidence = JSON.stringify({ symbol: market.symbol, price: market.ticker.lastPrice,
