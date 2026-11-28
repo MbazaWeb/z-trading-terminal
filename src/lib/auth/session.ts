@@ -64,6 +64,7 @@ export interface SessionData {
 }
 
 function sign(payload: string): string {
+  if (!SIGNING_KEY || (process.env.NODE_ENV === "production" && SIGNING_KEY.length < 32)) throw new Error("Secure SESSION_SECRET required");
   return createHmac("sha256", SIGNING_KEY).update(payload).digest("base64url");
 }
 
@@ -102,6 +103,9 @@ function decodeSession(raw: string): SessionData | null {
     ) {
       return null;
     }
+    if (!["deriv", "metatrader"].includes(parsed.provider) || !["demo", "real"].includes(parsed.accountType)) return null;
+    const issued = Date.parse(parsed.issuedAt);
+    if (!Number.isFinite(issued) || issued > Date.now() || Date.now() - issued > SESSION_MAX_AGE * 1000) return null;
     return parsed;
   } catch {
     return null;
@@ -204,7 +208,7 @@ export async function requireAuth(): Promise<SessionData> {
 export async function requireAdmin(): Promise<SessionData> {
   const session = await requireAuth();
   const ownerId = process.env.ZT_OWNER_USER_ID?.trim();
-  if (ownerId && session.userId !== ownerId) {
+  if (!ownerId || session.userId !== ownerId) {
     throw new AuthError("Admin privileges required", 403);
   }
   return session;
