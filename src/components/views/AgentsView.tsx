@@ -2,6 +2,7 @@
 
 import { memo, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
+import { AIAccountStatus } from "./AIAccountStatus";
 import {
   Bell,
   Brain,
@@ -1516,7 +1517,7 @@ export const AgentsView = memo(function AgentsView() {
             Agents &amp; Strategies
           </h1>
           <p className="mt-0.5 text-xs text-muted-foreground">
-            Self-improving trading agents voting on live Binance market data.
+            Local strategy agents and market analysis. Broker execution is separately controlled.
           </p>
         </div>
         <Button
@@ -1527,6 +1528,7 @@ export const AgentsView = memo(function AgentsView() {
         </Button>
       </header>
 
+      <AIAccountStatus />
       {/* Consensus + signals + discussion */}
       <ConsensusPanel />
 
