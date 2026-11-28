@@ -35,6 +35,25 @@ interface AuthState {
   loginWithDeriv: (token: string, accounts: AccountInfo[]) => void;
   loginWithMetaTrader: (loginid: string, accountType: AccountType) => void;
   setAccountType: (t: "real" | "demo") => void;
+  /**
+   * Patch the stored account info with a partial update. Used to push the
+   * real balance (fetched from the Deriv WebSocket API or the MT5 REST API)
+   * into the store after the initial login has resolved.
+   */
+  updateAccountInfo: (patch: Partial<AccountInfo>) => void;
+  /**
+   * Re-fetch the real balance from the appropriate upstream provider.
+   *
+   * For Deriv: opens a short-lived WebSocket to the Deriv API with the
+   * stored access token and reads the authorize.balance field.
+   *
+   * For MetaTrader: hits the server-side /api/mt5/balance endpoint, which
+   * proxies to MetaApi.cloud (configured via METAAPI_TOKEN + MT5_ACCOUNT_ID
+   * env vars).
+   *
+   * For Demo / unauthenticated: no-op (demo balance is fixed at $10,000).
+   */
+  refreshBalance: () => Promise<void>;
   logout: () => void;
   /** Internal: flipped true by the persist middleware after rehydration. */
   _setHydrated: () => void;
@@ -42,17 +61,29 @@ interface AuthState {
 
 // Default balances (used when the provider does not supply one).
 const DEMO_BALANCE = 10_000;
-// Real account balance: prefer the MT5_INITIAL_BALANCE env var so the demo
-// environment mirrors a real Equiti brokerage account (e.g. $10.98).
-const ENV_REAL_BALANCE = Number(process.env.MT5_INITIAL_BALANCE);
-const REAL_BALANCE = Number.isFinite(ENV_REAL_BALANCE) && ENV_REAL_BALANCE > 0
-  ? ENV_REAL_BALANCE
-  : 5_000;
+
+// Real account balance: prefer the NEXT_PUBLIC_MT5_INITIAL_BALANCE env var so
+// the demo environment mirrors a real Equiti brokerage account (e.g. $10.98).
+// We deliberately use the NEXT_PUBLIC_ prefix so this is inlined into the
+// client bundle at build time (non-prefixed vars are NOT exposed to client
+// code by Next.js, so accessing `process.env.MT5_INITIAL_BALANCE` from the
+// client silently returns undefined). Falls back to the non-prefixed var if
+// the deploy sets that instead, then to a sensible $5,000 default.
+const ENV_REAL_BALANCE_RAW =
+  process.env.NEXT_PUBLIC_MT5_INITIAL_BALANCE ??
+  process.env.MT5_INITIAL_BALANCE;
+const ENV_REAL_BALANCE = Number(ENV_REAL_BALANCE_RAW);
+const REAL_BALANCE =
+  Number.isFinite(ENV_REAL_BALANCE) && ENV_REAL_BALANCE > 0
+    ? ENV_REAL_BALANCE
+    : 5_000;
 
 // MT5 env vars: when set they drive the default login id + server name shown
-// to the user on a MetaTrader login.
-const ENV_MT5_LOGIN = process.env.MT5_LOGIN;
-const ENV_MT5_SERVER = process.env.MT5_SERVER;
+// to the user on a MetaTrader login. Same NEXT_PUBLIC_ story as above.
+const ENV_MT5_LOGIN =
+  process.env.NEXT_PUBLIC_MT5_LOGIN ?? process.env.MT5_LOGIN;
+const ENV_MT5_SERVER =
+  process.env.NEXT_PUBLIC_MT5_SERVER ?? process.env.MT5_SERVER;
 
 const MOCK_MT5_NAME = "MT5 Trader";
 const MOCK_MT5_EMAIL = "trader@metatrader.com";
@@ -68,11 +99,47 @@ const DEFAULT_STATE = {
   _hasHydrated: false,
 };
 
+// ---- Lazy imports (kept out of the module body so they don't run on SSR) ----
+
+async function fetchDerivBalanceLazy(
+  accessToken: string,
+): Promise<{ balance: number; currency: string; loginid: string } | null> {
+  try {
+    const mod = await import("@/lib/derivApi");
+    return await mod.fetchDerivBalance(accessToken);
+  } catch (err) {
+    console.warn("[authStore] Deriv balance fetch failed:", err);
+    return null;
+  }
+}
+
+async function fetchMT5BalanceLazy(): Promise<{
+  balance: number;
+  currency: string;
+} | null> {
+  try {
+    const res = await fetch("/api/mt5/balance", { cache: "no-store" });
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (
+      typeof data?.balance === "number" &&
+      Number.isFinite(data.balance) &&
+      typeof data?.currency === "string"
+    ) {
+      return { balance: data.balance, currency: data.currency };
+    }
+    return null;
+  } catch (err) {
+    console.warn("[authStore] MT5 balance fetch failed:", err);
+    return null;
+  }
+}
+
 // ---- Store ------------------------------------------------------------------
 
 export const useAuthStore = create<AuthState>()(
   persist(
-    (set) => ({
+    (set, get) => ({
       ...DEFAULT_STATE,
 
       setPendingAccountType: (t) => set({ pendingAccountType: t }),
@@ -105,10 +172,10 @@ export const useAuthStore = create<AuthState>()(
         const isDemo = accountType === "demo";
         // Prefer the login number from the MT5 env var when the caller did not
         // provide one. Prefix MT5 logins so they are visually distinguishable.
-        const envLogin = ENV_MT5_LOGIN
-          ? `MT5-${ENV_MT5_LOGIN}`
-          : null;
-        const resolvedLoginid = loginid?.trim() ? loginid : (envLogin ?? "MT5-account");
+        const envLogin = ENV_MT5_LOGIN ? `MT5-${ENV_MT5_LOGIN}` : null;
+        const resolvedLoginid = loginid?.trim()
+          ? loginid
+          : (envLogin ?? "MT5-account");
         // When a server env var is set, fold it into the email/name so the user
         // sees their real brokerage server on the account badge.
         const serverSuffix = ENV_MT5_SERVER ? ` (${ENV_MT5_SERVER})` : "";
@@ -128,15 +195,67 @@ export const useAuthStore = create<AuthState>()(
       },
 
       setAccountType: (t) => {
-        const info = useAuthStore.getState().accountInfo;
+        const info = get().accountInfo;
         // Adjust balance to match the chosen mode when we still hold defaults.
         if (info) {
           set({
             accountType: t,
-            accountInfo: { ...info, balance: t === "demo" ? DEMO_BALANCE : REAL_BALANCE },
+            accountInfo: {
+              ...info,
+              balance: t === "demo" ? DEMO_BALANCE : REAL_BALANCE,
+            },
           });
         } else {
           set({ accountType: t });
+        }
+        // After switching, re-fetch the real balance so the sidebar reflects
+        // the new account state. The refresh is a no-op for demo accounts.
+        void get().refreshBalance();
+      },
+
+      updateAccountInfo: (patch) => {
+        const info = get().accountInfo;
+        if (!info) return;
+        // Guard against NaN / undefined sneaking into the balance field and
+        // propagating to rendering. If the upstream returned a non-finite
+        // balance, we keep the previous balance.
+        const next: AccountInfo = { ...info, ...patch };
+        if (
+          patch.balance !== undefined &&
+          !Number.isFinite(patch.balance)
+        ) {
+          next.balance = info.balance;
+        }
+        set({ accountInfo: next });
+      },
+
+      refreshBalance: async () => {
+        const state = get();
+        if (!state.isAuthenticated || !state.accountInfo) return;
+        // Demo accounts use a fixed $10,000 virtual balance. Nothing to fetch.
+        if (state.accountType === "demo") return;
+
+        if (state.provider === "deriv" && state.accessToken) {
+          const result = await fetchDerivBalanceLazy(state.accessToken);
+          if (result) {
+            get().updateAccountInfo({
+              balance: result.balance,
+              currency: result.currency,
+              loginid: result.loginid,
+            });
+          }
+          return;
+        }
+
+        if (state.provider === "metatrader") {
+          const result = await fetchMT5BalanceLazy();
+          if (result) {
+            get().updateAccountInfo({
+              balance: result.balance,
+              currency: result.currency,
+            });
+          }
+          return;
         }
       },
 

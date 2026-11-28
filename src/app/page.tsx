@@ -34,9 +34,33 @@ export default function Page() {
 
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const accountType = useAuthStore((s) => s.accountType);
+  const provider = useAuthStore((s) => s.provider);
+  const accessToken = useAuthStore((s) => s.accessToken);
+  const refreshBalance = useAuthStore((s) => s.refreshBalance);
 
   // Handle the Deriv OAuth redirect (parses the URL hash on mount).
   useDerivCallback();
+
+  // --- Real balance fetch after login ---------------------------------------
+  // After the user logs in (or switches account type), pull the real balance
+  // from the appropriate upstream:
+  //   - Deriv  -> WebSocket API using the stored OAuth access token
+  //   - MT5    -> server-side /api/mt5/balance endpoint (MetaApi.cloud)
+  //   - Demo   -> no-op ($10,000 fixed balance)
+  // The refresh happens on mount and whenever the auth state changes. We
+  // also poll every 30s while authenticated so the sidebar stays current
+  // without requiring a manual refresh.
+  useEffect(() => {
+    if (!isAuthenticated || !accountType) return;
+    // Initial fetch on auth change.
+    void refreshBalance();
+    // Periodic refresh — 30s cadence keeps the balance live without
+    // hammering the upstream APIs.
+    const id = setInterval(() => {
+      void refreshBalance();
+    }, 30_000);
+    return () => clearInterval(id);
+  }, [isAuthenticated, accountType, provider, accessToken, refreshBalance]);
 
   // --- Trade store: load history on auth ------------------------------------
   const fetchTrades = useTradeStore((s) => s.fetchTrades);

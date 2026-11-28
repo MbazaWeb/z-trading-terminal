@@ -28,9 +28,15 @@ export const supabase = createClient(
   supabaseAnonKey ?? "placeholder-anon-key",
   {
     auth: {
-      persistSession: true,
-      autoRefreshToken: true,
-      detectSessionInUrl: true,
+      persistSession: false,
+      autoRefreshToken: false,
+      // IMPORTANT: Deriv OAuth redirects to `/#access_token=...&acct1=...`.
+      // If `detectSessionInUrl` were true, the Supabase auth client would
+      // try to parse that hash as a Supabase auth session and silently
+      // invoke `window.location.hash = ""`, clearing the Deriv token before
+      // our useDerivCallback hook can read it. We are not using Supabase
+      // Auth at all (only the trades table), so we disable this feature.
+      detectSessionInUrl: false,
     },
   },
 );

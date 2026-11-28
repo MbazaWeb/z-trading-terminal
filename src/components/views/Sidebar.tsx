@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Activity,
   CandlestickChart,
@@ -12,6 +12,7 @@ import {
   Menu,
   PanelLeftClose,
   PanelLeftOpen,
+  RefreshCw,
   type LucideIcon,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -24,6 +25,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { useAuthStore } from "@/lib/authStore";
+import { useTradeStore } from "@/lib/tradeStore";
 
 export type ViewId = "trading" | "dashboard" | "agents" | "bot" | "reports";
 
@@ -117,10 +119,11 @@ function SidebarBrand({ collapsed }: { collapsed: boolean }) {
 }
 
 function formatBalance(amount: number, currency: string): string {
+  if (!Number.isFinite(amount)) return `0.00 ${currency || "USD"}`;
   return `${amount.toLocaleString("en-US", {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
-  })} ${currency}`;
+  })} ${currency || "USD"}`;
 }
 
 function UserAccountSection({ collapsed }: { collapsed: boolean }) {
@@ -128,13 +131,61 @@ function UserAccountSection({ collapsed }: { collapsed: boolean }) {
   const provider = useAuthStore((s) => s.provider);
   const accountType = useAuthStore((s) => s.accountType);
   const setAccountType = useAuthStore((s) => s.setAccountType);
+  const refreshBalance = useAuthStore((s) => s.refreshBalance);
   const logout = useAuthStore((s) => s.logout);
+
+  // Subscribe to the trade store so we re-render whenever a trade is placed
+  // or closed. This keeps the displayed balance in sync with paper trades on
+  // demo accounts (where the upstream APIs are a no-op).
+  const lastTradeAt = useTradeStore((s) =>
+    s.trades.length > 0 ? s.trades[0].datetime : 0,
+  );
+  const openTradeCount = useTradeStore(
+    (s) => s.trades.filter((t) => t.status === "open").length,
+  );
+
+  // Trigger a balance refresh whenever the open-trade count changes (e.g.
+  // the bot closed a position, or the user placed a manual trade). This is
+  // a no-op on demo accounts (refreshBalance returns early for demo).
+  useEffect(() => {
+    if (!accountInfo) return;
+    void refreshBalance();
+  }, [
+    openTradeCount,
+    lastTradeAt,
+    accountType,
+    provider,
+    accountInfo,
+    refreshBalance,
+  ]);
+
+  const [refreshing, setRefreshing] = useState(false);
+  const handleManualRefresh = async () => {
+    if (refreshing) return;
+    setRefreshing(true);
+    try {
+      await refreshBalance();
+      toast.success("Balance refreshed");
+    } catch (err) {
+      toast.error("Failed to refresh balance", {
+        description: err instanceof Error ? err.message : String(err),
+      });
+    } finally {
+      // Brief cooldown so the icon animation is visible even on fast fetches.
+      setTimeout(() => setRefreshing(false), 400);
+    }
+  };
 
   if (!accountInfo) return null;
 
   const isDeriv = provider === "deriv";
   const isDemo = accountType === "demo";
-  const balancePositive = accountInfo.balance > 0;
+  // Guard against NaN/undefined balance sneaking into the UI.
+  const safeBalance = Number.isFinite(accountInfo.balance)
+    ? accountInfo.balance
+    : 0;
+  const safeCurrency = accountInfo.currency || "USD";
+  const balancePositive = safeBalance > 0;
 
   const handleLogout = () => {
     logout();
@@ -150,7 +201,7 @@ function UserAccountSection({ collapsed }: { collapsed: boolean }) {
       description:
         next === "demo"
           ? "Demo balance: $10,000.00"
-          : `Real balance: $${accountInfo.balance.toLocaleString("en-US", {
+          : `Real balance: $${safeBalance.toLocaleString("en-US", {
               minimumFractionDigits: 2,
               maximumFractionDigits: 2,
             })}`,
@@ -239,13 +290,40 @@ function UserAccountSection({ collapsed }: { collapsed: boolean }) {
               {isDemo ? "Demo" : "Real"}
             </span>
           </span>
-          <span
-            className={cn(
-              "font-mono text-xs tabular-nums font-semibold",
-              balancePositive ? "text-[var(--bull)]" : "text-[var(--bear)]",
-            )}
-          >
-            ${formatBalance(accountInfo.balance, accountInfo.currency)}
+          <span className="flex items-center gap-1.5">
+            <span
+              className={cn(
+                "font-mono text-xs tabular-nums font-semibold",
+                balancePositive ? "text-[var(--bull)]" : "text-[var(--bear)]",
+              )}
+              title={`Real balance for ${accountInfo.loginid}${
+                isDemo ? " (demo)" : ""
+              }`}
+            >
+              ${formatBalance(safeBalance, safeCurrency)}
+            </span>
+            <button
+              type="button"
+              onClick={handleManualRefresh}
+              disabled={refreshing || isDemo}
+              title={
+                isDemo
+                  ? "Demo balance is fixed"
+                  : "Refresh balance from upstream"
+              }
+              aria-label="Refresh balance"
+              className={cn(
+                "rounded p-1 text-muted-foreground transition-colors",
+                isDemo
+                  ? "cursor-not-allowed opacity-40"
+                  : "hover:bg-[#11161f] hover:text-foreground",
+                refreshing && "opacity-60",
+              )}
+            >
+              <RefreshCw
+                className={cn("size-3", refreshing && "animate-spin")}
+              />
+            </button>
           </span>
         </div>
 
