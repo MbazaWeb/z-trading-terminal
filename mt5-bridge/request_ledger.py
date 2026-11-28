@@ -29,3 +29,17 @@ def record_outcome(path: Path, request_id: str, broker_id: str | None):
             ("confirmed" if broker_id else "unknown",broker_id,str(UUID(request_id))))
         if result.rowcount != 1:
             raise RuntimeError("Submission state unavailable")
+
+
+def unresolved_requests(path: Path, account: str) -> list[dict]:
+    """Read pending recovery records without clearing or retrying them."""
+    if not account or not path.is_file():
+        raise RuntimeError("Existing account ledger required")
+    with closing(sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True, timeout=10)) as db:
+        db.row_factory = sqlite3.Row
+        rows = db.execute(
+            "SELECT id, account, fingerprint, status, broker_id FROM submissions "
+            "WHERE account=? AND status IN ('submitting','unknown') ORDER BY id",
+            (account,),
+        ).fetchall()
+        return [dict(row) for row in rows]
