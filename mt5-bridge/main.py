@@ -335,7 +335,14 @@ def submit_demo_order(order: SubmissionRequest):
                 if (result is not None and result.retcode == mt5.TRADE_RETCODE_DONE
                     and result.order > 0 and result.deal > 0
                     and math.isclose(result.volume, order.volume, rel_tol=0, abs_tol=1e-8)):
-                    broker_id = str(result.order)
+                    confirmed = mt5.history_deals_get(ticket=result.order)
+                    if confirmed is not None:
+                        matches = [d for d in confirmed if d.ticket == result.deal
+                                   and d.order == result.order and d.symbol == order.symbol
+                                   and d.type == request["type"] and d.entry == mt5.DEAL_ENTRY_IN
+                                   and math.isclose(d.volume, order.volume, rel_tol=0, abs_tol=1e-8)]
+                        if len(matches) == 1:
+                            broker_id = str(result.order)
             finally:
                 record_outcome(ledger, str(order.requestId), broker_id)
             return {"status": "confirmed", "brokerOrderId": broker_id} if broker_id else {"status": "unknown"}
