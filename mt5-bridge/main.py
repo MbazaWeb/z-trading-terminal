@@ -269,3 +269,53 @@ def order_check(order: PreflightRequest):
             if result is None or result.retcode != 0:
                 raise HTTPException(422, "Broker order check rejected")
             return {**estimate, "brokerCheckPassed": True, "executable": False}
+
+from request_ledger import reserve_request, record_outcome
+from uuid import UUID
+import hashlib
+import json
+
+class SubmissionRequest(PreflightRequest):
+    requestId: UUID
+
+def submit_demo_order(order: SubmissionRequest):
+    # Internal transport only. Do not expose as an HTTP endpoint until
+    # aggregate risk, emergency stop and reconciliation are integrated.
+    if os.getenv("REAL_TRADING_ENABLED") != "false" or os.getenv("MT5_DEMO_EXECUTION") != "true":
+        raise HTTPException(403, "Demo execution disabled")
+    ledger_setting = os.getenv("MT5_REQUEST_LEDGER_PATH", "")
+    ledger = Path(ledger_setting)
+    if not ledger_setting or not ledger.is_absolute() or not ledger.parent.is_dir():
+        raise HTTPException(503, "Durable ledger not configured")
+    with LOCK:
+        checked = order_check(order)
+        with broker() as account:
+            tick = mt5.symbol_info_tick(order.symbol)
+            info = mt5.symbol_info(order.symbol)
+            if tick is None or info is None or not account.trade_allowed or not account.trade_expert:
+                raise HTTPException(503, "Broker unavailable")
+            buy = order.side == "buy"
+            entry = tick.ask if buy else tick.bid
+            if entry != checked["entry"] or not 0 <= time.time()-tick.time <= 5:
+                raise HTTPException(409, "Quote changed")
+            if mt5.positions_get() is None or mt5.orders_get() is None:
+                raise HTTPException(503, "Exposure unavailable")
+            # Pilot transport permits only an empty account.
+            if mt5.positions_get() or mt5.orders_get():
+                raise HTTPException(409, "Existing exposure requires reconciliation")
+            request = {"action": mt5.TRADE_ACTION_DEAL, "symbol": order.symbol,
+                       "volume": order.volume, "type": mt5.ORDER_TYPE_BUY if buy else mt5.ORDER_TYPE_SELL,
+                       "price": entry, "sl": order.stopLoss, "tp": order.takeProfit,
+                       "type_time": mt5.ORDER_TIME_GTC, "comment": str(order.requestId).replace("-", "")[:24]}
+            if not info.filling_mode & 1:
+                raise HTTPException(422, "FOK filling required")
+            request["type_filling"] = mt5.ORDER_FILLING_FOK
+            check = mt5.order_check(request)
+            if check is None or check.retcode != 0:
+                raise HTTPException(422, "Broker rejected order check")
+            fingerprint = hashlib.sha256(json.dumps(request, sort_keys=True).encode()).hexdigest()
+            rid = str(order.requestId)
+            reserve_request(ledger, rid, f"{account.server}:{account.login}", fingerprint)
+            # Release gate intentionally closed until end-to-end tests pass.
+            record_outcome(ledger, rid, None)
+            return {"status": "unknown", "requestId": rid, "reason": "Transport release gate closed"}
