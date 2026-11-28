@@ -27,7 +27,7 @@ export interface BridgePosition {
 }
 
 export async function bridgeRequest<T>(
-  path: "/account" | "/positions" | "/health" | "/market" | "/risk-specs",
+  path: "/account" | "/positions" | "/health" | "/market" | "/risk-specs" | "/account-risk",
   symbol?: string
 ): Promise<T> {
   const base = process.env.MT5_BRIDGE_URL?.trim();
@@ -124,4 +124,19 @@ export async function getBridgeRiskSpecs(symbol: string) {
      data.maxVolume<data.minVolume || data.observedAt>now || now-data.observedAt>10000)
     throw new Error("Invalid or stale broker risk specifications");
   return data;
+}
+
+export async function getBridgeAccountRisk() {
+ const {z}=await import("zod");
+ const finite=z.number().finite();
+ const r=z.object({login:z.string(),server:z.string(),currency:z.string().min(1),
+ accountType:z.literal("demo"),equity:finite.positive(),freeMargin:finite.positive(),
+ dailyRealizedPnl:finite,openRisk:finite.nonnegative(),openPositions:z.number().int().nonnegative(),
+ pendingOrders:z.literal(0),dayStart:z.string(),observedAt:z.number().int(),executable:z.literal(false)
+ }).parse(await bridgeRequest<unknown>("/account-risk"));
+ const now=Date.now(), day=new Date(now); day.setUTCHours(0,0,0,0);
+ if(r.login!==process.env.MT5_LOGIN?.trim()||r.server!==process.env.MT5_SERVER?.trim()||
+ Date.parse(r.dayStart)!==day.getTime()||r.observedAt>now||now-r.observedAt>10000)
+ throw new Error("Invalid account risk snapshot");
+ return r;
 }
