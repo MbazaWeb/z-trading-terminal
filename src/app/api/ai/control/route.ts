@@ -27,9 +27,9 @@ export async function POST(request: Request) {
     const parsed = schema.safeParse(JSON.parse(raw));
     if (!parsed.success) return NextResponse.json({ error: "Invalid settings" }, { status: 400 });
     const next = parsed.data;
-    if (next.running && (next.emergencyStop || process.env.AI_ENABLED !== "true" ||
+    if (next.running && (next.emergencyStop ||
       !["risk","stopLoss","stopWin"].every(id => next.enabledAgentIds.includes(id)))) {
-      return NextResponse.json({ error: "AI or required risk agents unavailable" }, { status: 409 });
+      return NextResponse.json({ error: "Emergency stop active or required risk agents unavailable" }, { status: 409 });
     }
     await setAIControls(db, session.userId, next);
     return NextResponse.json(await getAIControls(db, session.userId));
