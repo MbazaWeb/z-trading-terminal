@@ -314,8 +314,31 @@ def submit_demo_order(order: SubmissionRequest):
             check = mt5.order_check(request)
             if check is None or check.retcode != 0:
                 raise HTTPException(422, "Broker rejected order check")
-            # No reservation or broker side effect while release is disabled.
-            raise HTTPException(503, "Native submission release gate closed")
+            # Internal transport: callers must enforce controller authorization.
+            daily = float(os.getenv("AI_DAILY_LOSS_LIMIT_ACCOUNT_CURRENCY", "0"))
+            costs = float(os.getenv("AI_ESTIMATED_COSTS_PER_LOT", "0")) * order.volume
+            now = datetime.now(timezone.utc)
+            deals = mt5.history_deals_get(now.replace(hour=0, minute=0, second=0, microsecond=0), now)
+            if deals is None or not math.isfinite(daily) or daily <= 0 or not math.isfinite(costs) or costs <= 0:
+                raise HTTPException(503, "Daily risk evidence unavailable")
+            pnl = sum(d.profit + d.commission + d.swap + d.fee for d in deals
+                      if d.type in (mt5.DEAL_TYPE_BUY, mt5.DEAL_TYPE_SELL))
+            if any(d.type not in (mt5.DEAL_TYPE_BUY, mt5.DEAL_TYPE_SELL, mt5.DEAL_TYPE_BALANCE, mt5.DEAL_TYPE_CREDIT) for d in deals):
+                raise HTTPException(503, "Unclassified account transaction")
+            if not math.isfinite(pnl) or checked["estimatedStopLoss"] + costs > min(daily + min(0, pnl), account.equity * 0.02):
+                raise HTTPException(422, "Daily risk limit exceeded")
+            fingerprint = hashlib.sha256(json.dumps(request, sort_keys=True).encode()).hexdigest()
+            reserve_request(ledger, str(order.requestId), f"{account.server}:{account.login}", fingerprint)
+            broker_id = None
+            try:
+                result = mt5.order_send(request)
+                if (result is not None and result.retcode == mt5.TRADE_RETCODE_DONE
+                    and result.order > 0 and result.deal > 0
+                    and math.isclose(result.volume, order.volume, rel_tol=0, abs_tol=1e-8)):
+                    broker_id = str(result.order)
+            finally:
+                record_outcome(ledger, str(order.requestId), broker_id)
+            return {"status": "confirmed", "brokerOrderId": broker_id} if broker_id else {"status": "unknown"}
 
 @app.get("/risk-specs", dependencies=[Depends(authenticate)])
 def risk_specs(symbol: str):
