@@ -2,6 +2,7 @@ import "server-only";
 import type { PrismaClient } from "@prisma/client";
 import type { SessionData } from "@/lib/auth/session";
 import { getBrokerSnapshot } from "./brokerRouter";
+import { analyzeEvidence } from "./client";
 import { getAIControls } from "./controlStore";
 import { nativeRiskPlan } from "@/lib/execution/nativeRiskPlan";
 import { checkBridgeOrder, getBridgeAccountRisk } from "@/lib/mt5BridgeServer";
@@ -32,7 +33,12 @@ export async function analyzeBrokerMarket(db: PrismaClient, session: SessionData
   if(checked.currency!==risk.currency||checked.entry!==plan.entry||!validateBrokerEstimate({margin:checked.margin,loss:checked.estimatedStopLoss,freeMargin:risk.freeMargin,riskBudget:Math.min(plan.riskBudget,risk.equity*0.02-risk.openRisk,Number(process.env.AI_DAILY_LOSS_LIMIT_ACCOUNT_CURRENCY)+Math.min(0,risk.dailyRealizedPnl)-risk.openRisk),costs})) return {action:"HOLD" as const,reason:"Broker risk changed",executable:false as const};
   const latest=await getAIControls(db,session.userId);
   if(!latest.running||latest.emergencyStop||latest.revision!==current.revision)return {action:"HOLD" as const,reason:"AI controls changed",executable:false as const};
-  return { action: "HOLD" as const, reason: "Broker preflight passed; AI advisory release pending", consensus, plan, checked,
+  if(process.env.AI_NATIVE_ADVISORY_ENABLED!=="true") return {action:"HOLD" as const,reason:"AI advisory release disabled",consensus,plan,checked,executable:false as const};
+  const evidence=JSON.stringify({symbol,action:consensus.action,strategies:consensus.candidates.map(c=>({strategy:c.strategy,action:c.action})),entry:checked.entry,stopLoss:plan.stopLoss,takeProfit:plan.takeProfit,atr:plan.atr,spread:market.spread,estimatedLoss:checked.estimatedStopLoss,costs,riskBudget:plan.riskBudget});
+  const advice=await analyzeEvidence(db,evidence);
+  const after=await getAIControls(db,session.userId);
+  if(!after.running||after.emergencyStop||after.revision!==latest.revision||Date.now()-checked.observedAt>10000||advice.decision.action!==consensus.action) return {action:"HOLD" as const,reason:"Advisory disagreement, expired quote or changed controls",reservationId:advice.reservationId,executable:false as const};
+  return { action: "HOLD" as const, advisoryAction:advice.decision.action, reason: advice.decision.rationale, reservationId:advice.reservationId, consensus, plan, checked,
     executable: false as const, market: { symbol: market.symbol, bid: market.bid,
       ask: market.ask, spread: market.spread, observedAt: market.observedAt,
       closedCandles: market.candles.length, volumeType: market.volumeType } };
