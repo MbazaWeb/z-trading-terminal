@@ -3,19 +3,27 @@ import {
   getConnectedRpcConnection,
   readMetaApiConfig,
 } from "@/lib/metaApiServer";
+import { requireAuth, authErrorResponse } from "@/lib/auth/session";
 
 /**
  * GET /api/mt5/balance
  *
  * Fetches the real-time account balance, equity, margin, and leverage from
- * the configured MetaApi MT5 account. Returns HTTP 503 when MetaApi is not
- * configured (the caller should fall back to the env-default balance);
- * returns HTTP 500 on any other error.
+ * the configured MetaApi MT5 account. Returns HTTP 401 when no session
+ * exists; HTTP 503 when MetaApi is not configured; HTTP 500 on other errors.
  *
  * The response shape is intentionally compatible with the authStore's
  * AccountInfo so the sidebar can drop it straight in.
  */
 export async function GET() {
+  // --- Auth guard -----------------------------------------------------------
+  try {
+    await requireAuth();
+  } catch (err) {
+    const { status, body } = authErrorResponse(err);
+    return NextResponse.json(body, { status });
+  }
+
   const config = readMetaApiConfig();
   if (!config) {
     return NextResponse.json(

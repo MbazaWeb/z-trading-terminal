@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { provisionMetaApiAccount } from "@/lib/metaApiServer";
+import { requireAdmin, authErrorResponse } from "@/lib/auth/session";
 
 /**
  * POST /api/mt5/connect
@@ -8,6 +9,10 @@ import { provisionMetaApiAccount } from "@/lib/metaApiServer";
  * server. This is a one-time setup step: once provisioned, the returned
  * account id should be persisted as the `MT5_ACCOUNT_ID` env var on Vercel
  * (and `METAAPI_TOKEN` should be set to the user's MetaApi.cloud API token).
+ *
+ * Requires admin privileges (ZT_OWNER_USER_ID env var must match the session
+ * user id). Provisioning a new MetaApi account costs quota on the user's
+ * MetaApi plan, so we restrict it to the owner.
  *
  * Request body:
  *   {
@@ -30,6 +35,14 @@ interface ConnectRequestBody {
 }
 
 export async function POST(request: Request) {
+  // --- Admin guard ----------------------------------------------------------
+  try {
+    await requireAdmin();
+  } catch (err) {
+    const { status, body } = authErrorResponse(err);
+    return NextResponse.json(body, { status });
+  }
+
   const token = process.env.METAAPI_TOKEN?.trim();
   if (!token) {
     return NextResponse.json(

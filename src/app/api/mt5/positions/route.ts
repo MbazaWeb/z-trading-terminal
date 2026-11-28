@@ -4,6 +4,7 @@ import {
   readMetaApiConfig,
   type MetaApiPosition,
 } from "@/lib/metaApiServer";
+import { requireAuth, authErrorResponse } from "@/lib/auth/session";
 
 /**
  * GET /api/mt5/positions
@@ -12,9 +13,20 @@ import {
  * account. Each position is normalized to the shape the terminal's bot view
  * expects (symbol, side, volume, openPrice, currentPrice, profit, sl, tp).
  *
- * Returns HTTP 503 when MetaApi is not configured; HTTP 500 on other errors.
+ * Requires an authenticated server-side session (HttpOnly cookie).
+ *
+ * Returns HTTP 401 when no session exists; HTTP 503 when MetaApi is not
+ * configured; HTTP 500 on other errors.
  */
 export async function GET() {
+  // --- Auth guard -----------------------------------------------------------
+  try {
+    await requireAuth();
+  } catch (err) {
+    const { status, body } = authErrorResponse(err);
+    return NextResponse.json(body, { status });
+  }
+
   const config = readMetaApiConfig();
   if (!config) {
     return NextResponse.json(

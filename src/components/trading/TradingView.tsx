@@ -10,12 +10,21 @@ import { BottomPanel } from "@/components/trading/BottomPanel";
 import type { MarketState } from "@/components/trading/useMarketData";
 import type { ChartType, IndicatorState } from "@/components/trading/types";
 
+interface TradingViewProps {
+  market: MarketState;
+  /**
+   * When true the TradePanel is hidden and the chart / order book / recent
+   * trades are rendered view-only. Used for guest browsing (no auth).
+   */
+  viewOnly?: boolean;
+}
+
 /**
  * Trading view — renders the live chart, order book, trade panel (with agent
  * consensus integration), and recent-trades bottom panel. All data comes from
  * the shared `useMarketData` hook (real Binance API).
  */
-export function TradingView({ market }: { market: MarketState }) {
+export function TradingView({ market, viewOnly }: TradingViewProps) {
   const [chartType, setChartType] = useState<ChartType>("candles");
   const [indicators, setIndicators] = useState<IndicatorState>({
     sma7: false,
@@ -64,12 +73,16 @@ export function TradingView({ market }: { market: MarketState }) {
               symbol={market.activeSymbol}
               lastPrice={market.livePrice}
             />
-            <TradePanel
-              symbol={market.activeSymbol}
-              livePrice={market.livePrice}
-              candles={market.candles}
-              stats={market.stats}
-            />
+            {viewOnly ? (
+              <ViewOnlyNotice />
+            ) : (
+              <TradePanel
+                symbol={market.activeSymbol}
+                livePrice={market.livePrice}
+                candles={market.candles}
+                stats={market.stats}
+              />
+            )}
           </div>
         </div>
 
@@ -90,12 +103,26 @@ export function TradingView({ market }: { market: MarketState }) {
             Z TERMINAL
           </span>
           <span>
-            Live market data from Binance public API. Trades recorded locally
-            and synced to Supabase when configured.
+            Live market data from Binance public API. Broker trades via
+            MetaApi.cloud. Trades synced to Supabase when configured.
           </span>
-          <span className="font-mono tabular-nums">v1.1.0 / live</span>
+          <span className="font-mono tabular-nums">v1.2.0 / live</span>
         </div>
       </footer>
     </div>
+  );
+}
+
+function ViewOnlyNotice() {
+  return (
+    <section className="flex flex-col rounded-xl border border-[var(--panel-border)] bg-[#0d1117] p-4">
+      <h2 className="text-xs font-semibold uppercase tracking-wider text-foreground">
+        Trade
+      </h2>
+      <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground">
+        Sign in to place trades. The market dashboard (chart, order book,
+        ticker tape, recent trades) is fully accessible as a guest.
+      </p>
+    </section>
   );
 }

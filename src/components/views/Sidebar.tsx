@@ -13,6 +13,8 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   RefreshCw,
+  Loader2,
+  AlertCircle,
   type LucideIcon,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -24,7 +26,7 @@ import {
 } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { useAuthStore } from "@/lib/authStore";
+import { useAuthStore, type TradingMode } from "@/lib/authStore";
 import { useTradeStore } from "@/lib/tradeStore";
 
 export type ViewId = "trading" | "dashboard" | "agents" | "bot" | "reports";
@@ -46,6 +48,9 @@ const NAV_ITEMS: NavItem[] = [
 interface SidebarProps {
   active: ViewId;
   onSelect: (id: ViewId) => void;
+  /** When true the sidebar is rendered for an unauthenticated (guest) viewer. */
+  guest?: boolean;
+  onSignIn?: () => void;
 }
 
 function NavButton({
@@ -126,10 +131,69 @@ function formatBalance(amount: number, currency: string): string {
   })} ${currency || "USD"}`;
 }
 
+function modeBadgeClass(mode: TradingMode): string {
+  switch (mode) {
+    case "paper":
+      return "bg-[rgba(234,179,8,0.18)] text-yellow-400";
+    case "demo":
+      return "bg-[rgba(59,130,246,0.18)] text-blue-400";
+    case "real":
+      return "bg-[rgba(234,57,67,0.18)] text-[var(--bear)]";
+  }
+}
+
+function GuestAccountSection({ collapsed, onSignIn }: { collapsed: boolean; onSignIn?: () => void }) {
+  if (collapsed) {
+    return (
+      <div className="px-2 pb-2">
+        <button
+          type="button"
+          onClick={onSignIn}
+          title="Sign in to trade"
+          className="flex w-full items-center justify-center rounded-md border border-[var(--bull)]/60 bg-[rgba(22,199,132,0.08)] py-2 text-xs font-medium text-[var(--bull)] transition-colors hover:bg-[rgba(22,199,132,0.16)]"
+        >
+          <LogOut className="size-4 rotate-180" />
+        </button>
+      </div>
+    );
+  }
+  return (
+    <div className="px-2 pb-2">
+      <div className="rounded-lg border border-[var(--panel-border)] bg-[#0d1117] p-3">
+        <div className="mb-2 flex items-center justify-between gap-2">
+          <span className="text-xs font-semibold text-muted-foreground">
+            Guest
+          </span>
+          <span
+            className={cn(
+              "rounded px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider",
+              modeBadgeClass("paper"),
+            )}
+          >
+            PAPER
+          </span>
+        </div>
+        <p className="mb-2.5 text-[10px] leading-relaxed text-muted-foreground">
+          Browsing the market dashboard as a guest. Sign in to place trades.
+        </p>
+        <button
+          type="button"
+          onClick={onSignIn}
+          className="flex w-full items-center justify-center gap-2 rounded-md border border-[var(--bull)]/60 bg-[rgba(22,199,132,0.08)] py-1.5 text-[11px] font-medium text-[var(--bull)] transition-colors hover:bg-[rgba(22,199,132,0.16)]"
+        >
+          <LogOut className="size-3.5 rotate-180" />
+          <span>Sign in to trade</span>
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function UserAccountSection({ collapsed }: { collapsed: boolean }) {
   const accountInfo = useAuthStore((s) => s.accountInfo);
   const provider = useAuthStore((s) => s.provider);
   const accountType = useAuthStore((s) => s.accountType);
+  const tradingMode = useAuthStore((s) => s.tradingMode);
   const setAccountType = useAuthStore((s) => s.setAccountType);
   const refreshBalance = useAuthStore((s) => s.refreshBalance);
   const logout = useAuthStore((s) => s.logout);
@@ -144,13 +208,7 @@ function UserAccountSection({ collapsed }: { collapsed: boolean }) {
     (s) => s.trades.filter((t) => t.status === "open").length,
   );
 
-  // Trigger a balance refresh whenever the open-trade count changes (e.g.
-  // the bot closed a position, or the user placed a manual trade). This is
-  // a no-op on demo accounts (refreshBalance returns early for demo).
-  // NOTE: accountInfo and refreshBalance are intentionally excluded from
-  // the dependency array. Including accountInfo would cause an infinite loop:
-  // refreshBalance -> updateAccountInfo -> new accountInfo ref -> effect reruns.
-  // We only need to refresh when the trade count or account type changes.
+  // Trigger a balance refresh whenever the open-trade count changes.
   useEffect(() => {
     if (!accountInfo) return;
     void refreshBalance();
@@ -162,13 +220,19 @@ function UserAccountSection({ collapsed }: { collapsed: boolean }) {
     setRefreshing(true);
     try {
       await refreshBalance();
-      toast.success("Balance refreshed");
+      const status = useAuthStore.getState().accountInfo?.balanceStatus;
+      if (status === "error") {
+        toast.error("Balance unavailable", {
+          description: "Could not fetch the balance from the broker.",
+        });
+      } else {
+        toast.success("Balance refreshed");
+      }
     } catch (err) {
       toast.error("Failed to refresh balance", {
         description: err instanceof Error ? err.message : String(err),
       });
     } finally {
-      // Brief cooldown so the icon animation is visible even on fast fetches.
       setTimeout(() => setRefreshing(false), 400);
     }
   };
@@ -177,15 +241,16 @@ function UserAccountSection({ collapsed }: { collapsed: boolean }) {
 
   const isDeriv = provider === "deriv";
   const isDemo = accountType === "demo";
-  // Guard against NaN/undefined balance sneaking into the UI.
-  const safeBalance = Number.isFinite(accountInfo.balance)
-    ? accountInfo.balance
-    : 0;
+  const isPaper = tradingMode === "paper";
+  const balanceStatus = accountInfo.balanceStatus ?? "loading";
+  const safeBalance =
+    typeof accountInfo.balance === "number" && Number.isFinite(accountInfo.balance)
+      ? accountInfo.balance
+      : null;
   const safeCurrency = accountInfo.currency || "USD";
-  const balancePositive = safeBalance > 0;
 
-  const handleLogout = () => {
-    logout();
+  const handleLogout = async () => {
+    await logout();
     toast.success("Signed out", {
       description: "You have been returned to the login screen.",
     });
@@ -197,11 +262,8 @@ function UserAccountSection({ collapsed }: { collapsed: boolean }) {
     toast.success(`Switched to ${next === "demo" ? "Demo" : "Real"} account`, {
       description:
         next === "demo"
-          ? "Demo balance: $10,000.00"
-          : `Real balance: $${safeBalance.toLocaleString("en-US", {
-              minimumFractionDigits: 2,
-              maximumFractionDigits: 2,
-            })}`,
+          ? "Demo balance: $10,000.00 (virtual)"
+          : "Real balance will be fetched from the broker.",
     });
   };
 
@@ -223,7 +285,7 @@ function UserAccountSection({ collapsed }: { collapsed: boolean }) {
   return (
     <div className="px-2 pb-2">
       <div className="rounded-lg border border-[var(--panel-border)] bg-[#0d1117] p-3">
-        {/* Login id + provider badge */}
+        {/* Login id + provider badge + mode badge */}
         <div className="mb-2 flex items-center justify-between gap-2">
           <span
             className="truncate font-mono text-xs tabular-nums text-foreground"
@@ -231,16 +293,27 @@ function UserAccountSection({ collapsed }: { collapsed: boolean }) {
           >
             {accountInfo.loginid}
           </span>
-          <span
-            className={cn(
-              "shrink-0 rounded px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider",
-              isDeriv
-                ? "bg-[rgba(22,199,132,0.15)] text-[var(--bull)]"
-                : "bg-[rgba(99,102,241,0.18)] text-indigo-300",
-            )}
-          >
-            {isDeriv ? "Deriv" : "MetaTrader"}
-          </span>
+          <div className="flex shrink-0 items-center gap-1">
+            <span
+              className={cn(
+                "rounded px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider",
+                isDeriv
+                  ? "bg-[rgba(22,199,132,0.15)] text-[var(--bull)]"
+                  : "bg-[rgba(99,102,241,0.18)] text-indigo-300",
+              )}
+            >
+              {isDeriv ? "Deriv" : "MT5"}
+            </span>
+            <span
+              className={cn(
+                "rounded px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider",
+                modeBadgeClass(tradingMode),
+              )}
+              title={`Trading mode: ${tradingMode}`}
+            >
+              {tradingMode.toUpperCase()}
+            </span>
+          </div>
         </div>
 
         {/* Real / Demo switch */}
@@ -273,61 +346,103 @@ function UserAccountSection({ collapsed }: { collapsed: boolean }) {
           </button>
         </div>
 
-        {/* Balance */}
+        {/* Balance (with loading / error / unavailable states) */}
         <div className="mb-2.5 flex items-center justify-between gap-2">
           <span className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
             <span
               className={cn(
                 "size-1.5 rounded-full",
-                isDemo ? "bg-[var(--bull)]" : "bg-[var(--bear)]",
+                isPaper
+                  ? "bg-yellow-400"
+                  : isDemo
+                    ? "bg-[var(--bull)]"
+                    : "bg-[var(--bear)]",
               )}
               aria-hidden="true"
             />
             <span className="font-medium uppercase tracking-wide">
-              {isDemo ? "Demo" : "Real"}
+              {isPaper ? "Paper" : isDemo ? "Demo" : "Real"}
             </span>
           </span>
           <span className="flex items-center gap-1.5">
-            <span
-              className={cn(
-                "font-mono text-xs tabular-nums font-semibold",
-                balancePositive ? "text-[var(--bull)]" : "text-[var(--bear)]",
-              )}
-              title={`Real balance for ${accountInfo.loginid}${
-                isDemo ? " (demo)" : ""
-              }`}
-            >
-              ${formatBalance(safeBalance, safeCurrency)}
-            </span>
-            <button
-              type="button"
-              onClick={handleManualRefresh}
-              disabled={refreshing || isDemo}
-              title={
-                isDemo
-                  ? "Demo balance is fixed"
-                  : "Refresh balance from upstream"
-              }
-              aria-label="Refresh balance"
-              className={cn(
-                "rounded p-1 text-muted-foreground transition-colors",
-                isDemo
-                  ? "cursor-not-allowed opacity-40"
-                  : "hover:bg-[#11161f] hover:text-foreground",
-                refreshing && "opacity-60",
-              )}
-            >
-              <RefreshCw
-                className={cn("size-3", refreshing && "animate-spin")}
-              />
-            </button>
+            {balanceStatus === "loading" && safeBalance == null ? (
+              <span className="flex items-center gap-1 text-[11px] text-muted-foreground">
+                <Loader2 className="size-3 animate-spin" />
+                Loading...
+              </span>
+            ) : balanceStatus === "error" || safeBalance == null ? (
+              <span className="flex items-center gap-1.5">
+                <span className="flex items-center gap-1 text-[11px] text-[var(--bear)]">
+                  <AlertCircle className="size-3" />
+                  Balance unavailable
+                </span>
+                <button
+                  type="button"
+                  onClick={handleManualRefresh}
+                  disabled={refreshing}
+                  title="Retry balance fetch"
+                  aria-label="Retry balance fetch"
+                  className={cn(
+                    "rounded p-1 text-muted-foreground transition-colors hover:bg-[#11161f] hover:text-foreground",
+                    refreshing && "opacity-60",
+                  )}
+                >
+                  <RefreshCw
+                    className={cn("size-3", refreshing && "animate-spin")}
+                  />
+                </button>
+              </span>
+            ) : (
+              <span className="flex items-center gap-1.5">
+                <span
+                  className={cn(
+                    "font-mono text-xs tabular-nums font-semibold",
+                    safeBalance > 0 ? "text-[var(--bull)]" : "text-[var(--bear)]",
+                  )}
+                  title={`Balance for ${accountInfo.loginid}${
+                    isDemo ? " (virtual)" : ""
+                  }`}
+                >
+                  {isDemo ? "$" : "$"}
+                  {formatBalance(safeBalance, safeCurrency)}
+                </span>
+                <button
+                  type="button"
+                  onClick={handleManualRefresh}
+                  disabled={refreshing || isDemo}
+                  title={
+                    isDemo
+                      ? "Demo balance is fixed (virtual)"
+                      : "Refresh balance from upstream"
+                  }
+                  aria-label="Refresh balance"
+                  className={cn(
+                    "rounded p-1 text-muted-foreground transition-colors",
+                    isDemo
+                      ? "cursor-not-allowed opacity-40"
+                      : "hover:bg-[#11161f] hover:text-foreground",
+                    refreshing && "opacity-60",
+                  )}
+                >
+                  <RefreshCw
+                    className={cn("size-3", refreshing && "animate-spin")}
+                  />
+                </button>
+              </span>
+            )}
           </span>
         </div>
 
-        {/* Demo mode note */}
-        {isDemo && (
+        {/* Demo / paper mode notes */}
+        {isPaper && (
+          <p className="mb-2.5 rounded-md border border-yellow-500/30 bg-[rgba(234,179,8,0.08)] px-2 py-1.5 text-[10px] leading-relaxed text-yellow-400">
+            Paper mode — local simulation only. No broker order is created.
+          </p>
+        )}
+        {!isPaper && isDemo && (
           <p className="mb-2.5 rounded-md border border-[var(--bull)]/30 bg-[rgba(22,199,132,0.08)] px-2 py-1.5 text-[10px] leading-relaxed text-[var(--bull)]">
-            Demo mode — for training only. No real funds at risk.
+            Demo mode — $10,000 virtual balance for training. No real funds at
+            risk.
           </p>
         )}
 
@@ -363,7 +478,7 @@ function SidebarFooter({ collapsed }: { collapsed: boolean }) {
             LIVE
           </span>
           <span className="font-mono tabular-nums text-muted-foreground">
-            v1.0.0
+            v1.2.0
           </span>
         </div>
       )}
@@ -371,7 +486,7 @@ function SidebarFooter({ collapsed }: { collapsed: boolean }) {
   );
 }
 
-export function Sidebar({ active, onSelect }: SidebarProps) {
+export function Sidebar({ active, onSelect, guest, onSignIn }: SidebarProps) {
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
 
@@ -379,6 +494,93 @@ export function Sidebar({ active, onSelect }: SidebarProps) {
     onSelect(id);
     setMobileOpen(false);
   };
+
+  if (guest) {
+    return (
+      <>
+        {/* Mobile hamburger bar */}
+        <div className="flex h-12 items-center border-b border-[var(--panel-border)] bg-[#0a0e17] px-3 md:hidden">
+          <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
+            <SheetTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="size-9 text-foreground"
+                aria-label="Open navigation"
+              >
+                <Menu className="size-5" />
+              </Button>
+            </SheetTrigger>
+            <SheetContent
+              side="left"
+              className="w-[240px] border-r border-[var(--panel-border)] bg-[#0a0e17] p-0"
+            >
+              <SheetTitle className="sr-only">Navigation</SheetTitle>
+              <div className="flex h-full flex-col">
+                <SidebarBrand collapsed={false} />
+                <nav className="flex flex-1 flex-col gap-1 p-2">
+                  {NAV_ITEMS.map((item) => (
+                    <NavButton
+                      key={item.id}
+                      item={item}
+                      active={active === item.id}
+                      collapsed={false}
+                      onSelect={handleSelect}
+                    />
+                  ))}
+                </nav>
+                <GuestAccountSection collapsed={false} onSignIn={onSignIn} />
+                <SidebarFooter collapsed={false} />
+              </div>
+            </SheetContent>
+          </Sheet>
+          <span className="ml-2 text-sm font-bold tracking-wider text-foreground">
+            Z TERMINAL
+          </span>
+        </div>
+
+        {/* Desktop fixed sidebar */}
+        <aside
+          className={cn(
+            "sticky top-0 hidden h-screen shrink-0 flex-col border-r border-[var(--panel-border)] bg-[#0a0e17] transition-[width] duration-200 md:flex",
+            collapsed ? "w-[64px]" : "w-[220px]",
+          )}
+        >
+          <SidebarBrand collapsed={collapsed} />
+          <nav className="flex flex-1 flex-col gap-1 p-2">
+            {NAV_ITEMS.map((item) => (
+              <NavButton
+                key={item.id}
+                item={item}
+                active={active === item.id}
+                collapsed={collapsed}
+                onSelect={onSelect}
+              />
+            ))}
+          </nav>
+          <div className="px-2 pb-2">
+            <button
+              type="button"
+              onClick={() => setCollapsed((c) => !c)}
+              title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+              className="flex w-full items-center justify-center gap-2 rounded-md border border-[var(--panel-border)] bg-[#0d1117] py-2 text-xs font-medium text-muted-foreground transition-colors hover:bg-[#11161f] hover:text-foreground"
+            >
+              {collapsed ? (
+                <PanelLeftOpen className="size-4" />
+              ) : (
+                <>
+                  <PanelLeftClose className="size-4" />
+                  <span>Collapse</span>
+                </>
+              )}
+            </button>
+          </div>
+          <GuestAccountSection collapsed={collapsed} onSignIn={onSignIn} />
+          <SidebarFooter collapsed={collapsed} />
+        </aside>
+      </>
+    );
+  }
 
   return (
     <>

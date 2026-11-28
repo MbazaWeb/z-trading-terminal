@@ -10,11 +10,10 @@ import { AgentsView } from "@/components/views/AgentsView";
 import { BotView } from "@/components/views/BotView";
 import { ReportsView } from "@/components/views/ReportsView";
 import { LoginView } from "@/components/views/LoginView";
-import { AccountTypeSelect } from "@/components/views/AccountTypeSelect";
 import { useAuthStore } from "@/lib/authStore";
 import { useDerivCallback } from "@/lib/useDerivCallback";
 import { useTradeStore, computeAgentStats } from "@/lib/tradeStore";
-import { useBotStore } from "@/lib/botStore";
+import { useBotStore, computeEquityPositionSize } from "@/lib/botStore";
 import { useAgentStore } from "@/lib/agents/agentStore";
 import { computePositionProfit, STRATEGY_CONFIG } from "@/lib/strategy";
 import { fetchTicker } from "@/lib/binance";
@@ -27,50 +26,63 @@ export default function Page() {
 
   // --- Auth gate -------------------------------------------------------------
   const hasHydrated = useAuthStore((s) => s._hasHydrated);
+  const syncFromServerSession = useAuthStore((s) => s.syncFromServerSession);
+  const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
+  const accountType = useAuthStore((s) => s.accountType);
+  const provider = useAuthStore((s) => s.provider);
+  const tradingMode = useAuthStore((s) => s.tradingMode);
+  const refreshBalance = useAuthStore((s) => s.refreshBalance);
+
   useEffect(() => {
     if (hasHydrated) return;
     useAuthStore.persist.rehydrate();
   }, [hasHydrated]);
 
-  const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
-  const accountType = useAuthStore((s) => s.accountType);
-  const provider = useAuthStore((s) => s.provider);
-  const accessToken = useAuthStore((s) => s.accessToken);
-  const refreshBalance = useAuthStore((s) => s.refreshBalance);
-
-  // Handle the Deriv OAuth redirect (parses the URL hash on mount).
+  // Handle the Deriv OAuth redirect (parses the URL on mount).
   useDerivCallback();
+
+  // On hydration, sync from the server-side session. This picks up sessions
+  // from prior visits (the HttpOnly cookie is sent automatically) and from
+  // the Deriv OAuth callback redirect.
+  useEffect(() => {
+    if (!hasHydrated) return;
+    void syncFromServerSession();
+  }, [hasHydrated, syncFromServerSession]);
 
   // --- Real balance fetch after login ---------------------------------------
   // After the user logs in (or switches account type), pull the real balance
   // from the appropriate upstream:
-  //   - Deriv  -> WebSocket API using the stored OAuth access token
-  //   - MT5    -> server-side /api/mt5/balance endpoint (MetaApi.cloud)
-  //   - Demo   -> no-op ($10,000 fixed balance)
-  // The refresh happens on mount and whenever the auth state changes. We
-  // also poll every 30s while authenticated so the sidebar stays current
-  // without requiring a manual refresh.
+  //   - Deriv       -> server-side /api/deriv/balance (reads token from session)
+  //   - MetaTrader  -> server-side /api/mt5/balance (MetaApi.cloud)
+  //   - Demo        -> no-op ($10,000 fixed virtual balance)
+  //   - Paper       -> no-op (no broker)
   useEffect(() => {
     if (!isAuthenticated || !accountType) return;
-    // Initial fetch on auth change.
     void refreshBalance();
-    // Periodic refresh — 30s cadence keeps the balance live without
-    // hammering the upstream APIs.
     const id = setInterval(() => {
       void refreshBalance();
     }, 30_000);
     return () => clearInterval(id);
-    // refreshBalance is a stable Zustand action — excluded from deps to
-    // prevent potential re-render loops.
-  }, [isAuthenticated, accountType, provider, accessToken]);
+    // refreshBalance is a stable Zustand action — excluded from deps.
+  }, [isAuthenticated, accountType, provider, tradingMode, refreshBalance]);
 
   // --- Trade store: load history on auth ------------------------------------
   const fetchTrades = useTradeStore((s) => s.fetchTrades);
+  const syncPendingTrades = useTradeStore((s) => s.syncPendingTrades);
   useEffect(() => {
     if (isAuthenticated && accountType) {
-      fetchTrades();
+      void fetchTrades();
     }
   }, [isAuthenticated, accountType, fetchTrades]);
+
+  // Retry persisting trades that failed to save on the previous attempt.
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    const id = setInterval(() => {
+      void syncPendingTrades();
+    }, 15_000);
+    return () => clearInterval(id);
+  }, [isAuthenticated, syncPendingTrades]);
 
   // --- Agent stats sync: recompute winRate/pnl/sparkline from real trades ---
   const trades = useTradeStore((s) => s.trades);
@@ -98,8 +110,9 @@ export default function Page() {
   // --- Take-profit automation for manual (TradePanel) positions -------------
   // For each open manual trade placed from the TradePanel, compute the live
   // profit using the active symbol's live price. When the profit reaches the
-  // strategy take-profit target ($2.00), auto-close the position and log the
-  // take-profit event to the bot activity feed.
+  // strategy take-profit target ($2.00), auto-close the position. If the
+  // trade has a brokerOrderId, call /api/mt5/close first and wait for broker
+  // confirmation before marking the trade as closed locally.
   const activeSymbolLabelRef = useRef<string>(market.activeSymbol.label);
   const livePriceRef = useRef<number>(market.livePrice);
   useEffect(() => {
@@ -108,6 +121,27 @@ export default function Page() {
   useEffect(() => {
     livePriceRef.current = market.livePrice;
   }, [market.livePrice]);
+
+  async function closeTradeViaBroker(trade: { id: string; brokerOrderId?: string | null; side: "buy" | "sell"; market: string }): Promise<boolean> {
+    if (!trade.brokerOrderId) return true; // paper trade — close locally
+    try {
+      const res = await fetch("/api/mt5/close", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ positionId: trade.brokerOrderId }),
+        cache: "no-store",
+      });
+      if (!res.ok) {
+        const err = (await res.json().catch(() => ({}))) as { error?: string };
+        console.warn("[page] broker close failed:", err.error);
+        return false;
+      }
+      return true;
+    } catch (err) {
+      console.warn("[page] broker close threw:", err);
+      return false;
+    }
+  }
 
   useEffect(() => {
     const id = setInterval(() => {
@@ -133,15 +167,30 @@ export default function Page() {
         );
         if (profit >= STRATEGY_CONFIG.takeProfitTarget) {
           const pnlPct = Math.round((profit / t.amount) * 10000) / 100;
-          void store.closeTrade(t.id, livePrice, profit, pnlPct, "win");
-          botStore.addBotLog(
-            "TAKE-PROFIT",
-            `TAKE-PROFIT: Closed ${t.market} position, profit $${profit.toFixed(2)}`,
-          );
-          // Self-correction: every agent that voted (manual trade has no
-          // voting agents, but the consensus may have flagged a buy/sell). We
-          // only correct on consensus-driven trades, which are tagged with an
-          // agentId. Skip for pure manual trades.
+          // If the trade has a broker order id, close via the broker first.
+          if (t.brokerOrderId) {
+            void closeTradeViaBroker(t).then((ok) => {
+              if (ok) {
+                void store.closeTrade(t.id, livePrice, profit, pnlPct, "win");
+                botStore.addBotLog(
+                  "TAKE-PROFIT",
+                  `TAKE-PROFIT: Closed ${t.market} position (broker), profit $${profit.toFixed(2)}`,
+                );
+              } else {
+                botStore.addBotLog(
+                  "INFO",
+                  `Broker close failed for ${t.market} — will retry next tick`,
+                );
+              }
+            });
+          } else {
+            // Paper trade — close locally.
+            void store.closeTrade(t.id, livePrice, profit, pnlPct, "win");
+            botStore.addBotLog(
+              "TAKE-PROFIT",
+              `TAKE-PROFIT: Closed ${t.market} paper position, profit $${profit.toFixed(2)}`,
+            );
+          }
         }
       }
     }, 1000);
@@ -202,11 +251,19 @@ export default function Page() {
         return;
       }
 
+      // Equity-based position sizing: use the REAL account balance from the
+      // auth store, not a hardcoded $5000 fallback.
+      const accountBalance = useAuthStore.getState().accountInfo?.balance ?? null;
+      const positionSize = computeEquityPositionSize(accountBalance, config);
+      if (positionSize <= 0) {
+        botStore.addBotLog(
+          "RISK-CHECK",
+          "Account balance not available -- bot trade skipped (refresh balance from sidebar)",
+        );
+        return;
+      }
+
       const side = consensus.decision;
-      const positionSize = Math.min(
-        config.maxPositionSize,
-        Math.max(50, Math.round((5000 * config.riskPerTrade) / 100)),
-      );
       const slPct = config.defaultStopLoss / 100;
       const tpPct = config.defaultTakeProfit / 100;
       const size = positionSize / livePrice;
@@ -259,7 +316,7 @@ export default function Page() {
       );
       botStore.addBotLog(
         "RISK-CHECK",
-        `Position $${positionSize}, SL ${config.defaultStopLoss}%, TP ${config.defaultTakeProfit}% -- APPROVED`,
+        `Position $${positionSize.toFixed(2)} (balance $${accountBalance?.toFixed(2) ?? "n/a"} * ${config.riskPerTrade}%), SL ${config.defaultStopLoss}%, TP ${config.defaultTakeProfit}% -- APPROVED`,
       );
     }, 5000);
     return () => clearInterval(id);
@@ -267,7 +324,8 @@ export default function Page() {
 
   // --- Bot position price refresh + SL/TP automation -----------------------
   // For each open bot position, poll the live price from Binance (per symbol)
-  // and auto-close on SL/TP crossings.
+  // and auto-close on SL/TP crossings. Broker-confirmed positions are closed
+  // via /api/mt5/close before being marked closed locally.
   useEffect(() => {
     const id = setInterval(async () => {
       const botStore = useBotStore.getState();
@@ -311,7 +369,6 @@ export default function Page() {
                 pnlPct,
                 pnl >= 0 ? "win" : "loss",
               );
-              // Self-correction on the agents that voted for this position.
               if (p.agentId) {
                 useAgentStore.getState().correctAfterTrade(
                   pnl >= 0 ? "win" : "loss",
@@ -387,6 +444,24 @@ export default function Page() {
   }, [market.symbols]);
 
   // --- Render shell ----------------------------------------------------------
+  // Public dashboard access (FIX 9): when NOT authenticated, show the market
+  // dashboard with a "Sign in to trade" banner. The Trading view is
+  // accessible without login (view-only — no Buy/Sell panel). Dashboard,
+  // Agents, Bot, and Reports require login.
+  const isGuest = !isAuthenticated;
+  const [showLogin, setShowLogin] = useState(false);
+
+  const handleSignIn = () => {
+    // The login view is shown below when isGuest is true AND the user clicked
+    // "Sign in to trade". We toggle a state to flip from guest dashboard to
+    // the login card.
+    setShowLogin(true);
+  };
+
+  // Restricted views require authentication. Guests can only see "trading".
+  // Derive the effective view instead of calling setState in an effect.
+  const effectiveView: ViewId = isGuest ? "trading" : view;
+
   return (
     <div className="flex min-h-screen flex-col bg-background">
       <TickerTape
@@ -398,24 +473,79 @@ export default function Page() {
 
       {!hasHydrated ? (
         <div className="flex-1" />
-      ) : !isAuthenticated ? (
-        <LoginView />
-      ) : !accountType ? (
-        <AccountTypeSelect />
+      ) : isGuest && !showLogin ? (
+        // Guest browsing: full Trading view (view-only) + guest sidebar.
+        <div className="flex flex-1">
+          <Sidebar
+            active={effectiveView}
+            onSelect={setView}
+            guest
+            onSignIn={handleSignIn}
+          />
+          <main className="min-w-0 flex-1">
+            <GuestBanner onSignIn={handleSignIn} />
+            <div key={effectiveView} className="animate-view-enter">
+              <TradingView market={market} viewOnly />
+            </div>
+          </main>
+        </div>
+      ) : isGuest && showLogin ? (
+        <LoginView
+          onBrowseAsGuest={() => {
+            setShowLogin(false);
+            setView("trading");
+          }}
+        />
+      ) : !accountType && isAuthenticated ? (
+        // Authenticated but no account type picked (legacy flow).
+        <AccountTypeSelectWrapper />
       ) : (
         <div className="flex flex-1">
-          <Sidebar active={view} onSelect={setView} />
+          <Sidebar active={effectiveView} onSelect={setView} />
           <main className="min-w-0 flex-1">
-            <div key={view} className="animate-view-enter">
-              {view === "trading" && <TradingView market={market} />}
-              {view === "dashboard" && <DashboardView />}
-              {view === "agents" && <AgentsView />}
-              {view === "bot" && <BotView />}
-              {view === "reports" && <ReportsView />}
+            <div key={effectiveView} className="animate-view-enter">
+              {effectiveView === "trading" && <TradingView market={market} />}
+              {effectiveView === "dashboard" && <DashboardView />}
+              {effectiveView === "agents" && <AgentsView />}
+              {effectiveView === "bot" && <BotView />}
+              {effectiveView === "reports" && <ReportsView />}
             </div>
           </main>
         </div>
       )}
     </div>
   );
+}
+
+// --- Guest banner -----------------------------------------------------------
+
+function GuestBanner({ onSignIn }: { onSignIn: () => void }) {
+  return (
+    <div className="flex items-center justify-between gap-3 border-b border-[var(--bull)]/30 bg-[rgba(22,199,132,0.06)] px-4 py-2 text-[11px]">
+      <span className="text-muted-foreground">
+        Browsing as guest — market data is live; trading is disabled.
+      </span>
+      <button
+        type="button"
+        onClick={onSignIn}
+        className="rounded border border-[var(--bull)]/60 bg-[rgba(22,199,132,0.12)] px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-[var(--bull)] transition-colors hover:bg-[rgba(22,199,132,0.2)]"
+      >
+        Sign in to trade
+      </button>
+    </div>
+  );
+}
+
+// --- Account type select wrapper --------------------------------------------
+
+function AccountTypeSelectWrapper() {
+  // Lazy import to keep the guest dashboard bundle small.
+  const [Comp, setComp] = useState<React.ComponentType | null>(null);
+  useEffect(() => {
+    void import("@/components/views/AccountTypeSelect").then((m) => {
+      setComp(() => m.AccountTypeSelect);
+    });
+  }, []);
+  if (!Comp) return <div className="flex-1" />;
+  return <Comp />;
 }

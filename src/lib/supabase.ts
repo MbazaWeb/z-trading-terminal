@@ -56,7 +56,11 @@ export interface TradeRow {
   pnl_pct: number;
   result: "win" | "loss" | null;
   agent_id: string | null;
-  source: "seed" | "agent" | "bot" | "manual";
+  source: "seed" | "agent" | "bot" | "manual" | "paper";
+  /** Idempotency key (UUID) supplied by the client for broker trades. */
+  client_order_id?: string | null;
+  /** Broker order id (null for paper trades). */
+  broker_order_id?: string | null;
   user_id: string | null;
   created_at: string;
 }
