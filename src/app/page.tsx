@@ -14,6 +14,7 @@ import { AccountTypeSelect } from "@/components/views/AccountTypeSelect";
 import { useStore } from "@/lib/mockData";
 import { useAuthStore } from "@/lib/authStore";
 import { useDerivCallback } from "@/lib/useDerivCallback";
+import { computePositionProfit, STRATEGY_CONFIG } from "@/lib/strategy";
 
 export default function Page() {
   // The shell owns the shared market-data instance so the top TickerTape and
@@ -111,6 +112,57 @@ export default function Page() {
       cancelled = true;
       if (botTimerRef.current) clearTimeout(botTimerRef.current);
     };
+  }, []);
+
+  // --- Drop Catcher take-profit automation -----------------------------------
+  // For each open manual trade placed from the TradePanel, compute the live
+  // profit using the active symbol's live price. When the profit reaches the
+  // strategy take-profit target ($2.00), auto-close the position and log the
+  // take-profit event to the bot activity feed.
+  // The activeSymbol and livePrice are tracked via refs so the interval can
+  // always read the freshest values without re-subscribing on every tick.
+  const activeSymbolLabelRef = useRef<string>(market.activeSymbol.label);
+  const livePriceRef = useRef<number>(market.livePrice);
+  useEffect(() => {
+    activeSymbolLabelRef.current = market.activeSymbol.label;
+  }, [market.activeSymbol.label]);
+  useEffect(() => {
+    livePriceRef.current = market.livePrice;
+  }, [market.livePrice]);
+
+  useEffect(() => {
+    const id = setInterval(() => {
+      const store = useStore.getState();
+      const label = activeSymbolLabelRef.current;
+      const livePrice = livePriceRef.current;
+      // Snapshot the open manual trades for the active symbol so we don't
+      // iterate a mutating collection while closing.
+      const openManual = store.trades.filter(
+        (t) =>
+          t.status === "open" &&
+          t.source === "manual" &&
+          t.market === label,
+      );
+      if (openManual.length === 0) return;
+      for (const t of openManual) {
+        const size = t.entryPrice > 0 ? t.amount / t.entryPrice : 0;
+        const profit = computePositionProfit(
+          t.side,
+          t.entryPrice,
+          livePrice,
+          size,
+        );
+        if (profit >= STRATEGY_CONFIG.takeProfitTarget) {
+          const pnlPct = Math.round((profit / t.amount) * 10000) / 100;
+          store.closeTrade(t.id, livePrice, profit, pnlPct, "win");
+          store.addBotLog(
+            "TAKE-PROFIT",
+            `TAKE-PROFIT: Closed ${t.market} position, profit $${profit.toFixed(2)}`,
+          );
+        }
+      }
+    }, 1000);
+    return () => clearInterval(id);
   }, []);
 
   // --- Render shell ----------------------------------------------------------

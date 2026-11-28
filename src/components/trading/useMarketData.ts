@@ -375,6 +375,12 @@ export interface MarketState {
   orderBook: OrderBook;
   trades: Trade[];
   lastPriceDirection: "up" | "down" | "flat";
+  /** Live (drifting) mid price for the active symbol. */
+  livePrice: number;
+  /** Switch the active symbol by id. */
+  selectSymbol: (id: string) => void;
+  /** Switch the chart timeframe. */
+  setTimeframe: (tf: Timeframe) => void;
 }
 
 export function useMarketData(initialSymbolId = "BTCUSDT") {

@@ -531,8 +531,11 @@ function TradeLogsTable({ trades }: { trades: Trade[] }) {
       out = out.filter((t) => t.market.toLowerCase().includes(q));
     }
     out.sort((a, b) => {
-      let av: number | string = a[sortKey];
-      let bv: number | string = b[sortKey];
+      // Trade[sortKey] can be `string | number | null` (exitPrice is nullable
+      // for open trades). We treat null as -Infinity so open trades sort last
+      // when ascending and first when descending, matching user expectation.
+      let av: string | number | null = a[sortKey];
+      let bv: string | number | null = b[sortKey];
       if (sortKey === "exitPrice") {
         av = a.exitPrice ?? -1;
         bv = b.exitPrice ?? -1;
@@ -540,6 +543,8 @@ function TradeLogsTable({ trades }: { trades: Trade[] }) {
       if (typeof av === "string" && typeof bv === "string") {
         return sortDir === "asc" ? av.localeCompare(bv) : bv.localeCompare(av);
       }
+      if (av == null) av = -1;
+      if (bv == null) bv = -1;
       return sortDir === "asc"
         ? (av as number) - (bv as number)
         : (bv as number) - (av as number);

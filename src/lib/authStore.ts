@@ -42,7 +42,17 @@ interface AuthState {
 
 // Default balances (used when the provider does not supply one).
 const DEMO_BALANCE = 10_000;
-const REAL_BALANCE = 5_000;
+// Real account balance: prefer the MT5_INITIAL_BALANCE env var so the demo
+// environment mirrors a real Equiti brokerage account (e.g. $10.98).
+const ENV_REAL_BALANCE = Number(process.env.MT5_INITIAL_BALANCE);
+const REAL_BALANCE = Number.isFinite(ENV_REAL_BALANCE) && ENV_REAL_BALANCE > 0
+  ? ENV_REAL_BALANCE
+  : 5_000;
+
+// MT5 env vars: when set they drive the default login id + server name shown
+// to the user on a MetaTrader login.
+const ENV_MT5_LOGIN = process.env.MT5_LOGIN;
+const ENV_MT5_SERVER = process.env.MT5_SERVER;
 
 const MOCK_MT5_NAME = "MT5 Trader";
 const MOCK_MT5_EMAIL = "trader@metatrader.com";
@@ -92,17 +102,26 @@ export const useAuthStore = create<AuthState>()(
 
       loginWithMetaTrader: (loginid, accountType) => {
         const isDemo = accountType === "demo";
+        // Prefer the login number from the MT5 env var when the caller did not
+        // provide one. Prefix MT5 logins so they are visually distinguishable.
+        const envLogin = ENV_MT5_LOGIN
+          ? `MT5-${ENV_MT5_LOGIN}`
+          : null;
+        const resolvedLoginid = loginid?.trim() ? loginid : (envLogin ?? "MT5-account");
+        // When a server env var is set, fold it into the email/name so the user
+        // sees their real brokerage server on the account badge.
+        const serverSuffix = ENV_MT5_SERVER ? ` (${ENV_MT5_SERVER})` : "";
         set({
           isAuthenticated: true,
           provider: "metatrader",
           accessToken: null,
           accountType,
           accountInfo: {
-            loginid,
+            loginid: resolvedLoginid,
             currency: "USD",
             balance: isDemo ? DEMO_BALANCE : REAL_BALANCE,
             email: MOCK_MT5_EMAIL,
-            name: MOCK_MT5_NAME,
+            name: `${MOCK_MT5_NAME}${serverSuffix}`,
           },
         });
       },

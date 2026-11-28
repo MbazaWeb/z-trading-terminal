@@ -1,11 +1,19 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
+import { RefreshCw } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { formatPrice, priceDecimals } from "./useMarketData";
 import type { SymbolInfo } from "./types";
+import { useStore } from "@/lib/mockData";
+import { useAuthStore } from "@/lib/authStore";
+import {
+  STRATEGY_CONFIG,
+  analyzeEntry,
+  type StrategyAnalysis,
+} from "@/lib/strategy";
 
 interface TradePanelProps {
   symbol: SymbolInfo;
@@ -14,14 +22,69 @@ interface TradePanelProps {
 
 const FAKE_BALANCE_QUOTE = 50_000;
 
+// Reference risk config mirrors the bot config; the TradePanel uses the live
+// bot config from the store so strategy risk reflects whatever the user has
+// configured on the Bot view.
+function useRiskConfig(accountBalance: number) {
+  const botConfig = useStore((s) => s.bot.config);
+  const trades = useStore((s) => s.trades);
+  const simNow = useStore((s) => s.simNow);
+  const currentDailyLoss = useMemo(() => {
+    const dayStart = simNow - (simNow % 86_400_000);
+    return Math.abs(
+      trades
+        .filter(
+          (t) =>
+            t.status === "closed" &&
+            (t.source === "manual" || t.source === "bot") &&
+            t.datetime >= dayStart &&
+            t.pnl < 0,
+        )
+        .reduce((sum, t) => sum + t.pnl, 0),
+    );
+  }, [trades, simNow]);
+  return {
+    maxPositionSize: botConfig.maxPositionSize,
+    maxDailyLoss: botConfig.maxDailyLoss,
+    currentDailyLoss,
+    defaultStopLoss: botConfig.defaultStopLoss,
+    defaultTakeProfit: botConfig.defaultTakeProfit,
+    riskPerTrade: botConfig.riskPerTrade,
+    accountBalance,
+  };
+}
+
 export function TradePanel({ symbol, livePrice }: TradePanelProps) {
   const [side, setSide] = useState<"buy" | "sell">("buy");
   const [priceInput, setPriceInput] = useState(() =>
     livePrice.toFixed(priceDecimals(livePrice)),
   );
   const [amountInput, setAmountInput] = useState("");
+  const [analysis, setAnalysis] = useState<StrategyAnalysis | null>(null);
 
   const decimals = priceDecimals(livePrice);
+
+  // Pull strategy state + actions from the shared store.
+  const strategy = useStore((s) => s.strategy);
+  const setStrategyReference = useStore((s) => s.setStrategyReference);
+  const resetStrategySession = useStore((s) => s.resetStrategySession);
+  const setLastAnalysis = useStore((s) => s.setLastAnalysis);
+  const addTrade = useStore((s) => s.addTrade);
+  const addBotLog = useStore((s) => s.addBotLog);
+  const simNow = useStore((s) => s.simNow);
+
+  // Account balance from auth store so strategy risk uses the real balance.
+  const accountInfo = useAuthStore((s) => s.accountInfo);
+  const accountBalance = accountInfo?.balance ?? FAKE_BALANCE_QUOTE;
+  const riskConfig = useRiskConfig(accountBalance);
+
+  // When the Trading view mounts (or whenever the reference price is null),
+  // start the strategy session at the current live price.
+  useEffect(() => {
+    if (strategy.referencePrice == null) {
+      setStrategyReference(livePrice);
+    }
+  }, [strategy.referencePrice, setStrategyReference, livePrice]);
 
   // Reset the price field to the live price when the symbol changes, using
   // the React "adjust state during render" pattern (no effect needed).
@@ -30,6 +93,7 @@ export function TradePanel({ symbol, livePrice }: TradePanelProps) {
     setAppliedSymbolId(symbol.id);
     setPriceInput(livePrice.toFixed(decimals));
     setAmountInput("");
+    setAnalysis(null);
   }
 
   const price = parseFloat(priceInput) || 0;
@@ -49,13 +113,93 @@ export function TradePanel({ symbol, livePrice }: TradePanelProps) {
     setAmountInput(amt.toFixed(symbol.basePrice >= 1 ? 4 : 6));
   }
 
-  function handleSubmit() {
+  // Reference price is the strategy session open. Fall back to the live price
+  // if the session has not started yet so the analysis never crashes.
+  const referencePrice = strategy.referencePrice ?? livePrice;
+
+  // Clicking Buy/Sell does NOT place a trade. It runs the strategy analysis
+  // and shows the result in the panel below. The user must then click the
+  // "Trade Now" button to actually place the trade (only when conditions met).
+  function handleAnalyze() {
+    const result = analyzeEntry(
+      side,
+      referencePrice,
+      livePrice,
+      accountBalance,
+      {
+        maxPositionSize: riskConfig.maxPositionSize,
+        maxDailyLoss: riskConfig.maxDailyLoss,
+        currentDailyLoss: riskConfig.currentDailyLoss,
+        defaultStopLoss: riskConfig.defaultStopLoss,
+        defaultTakeProfit: riskConfig.defaultTakeProfit,
+        riskPerTrade: riskConfig.riskPerTrade,
+      },
+    );
+    setAnalysis(result);
+    setLastAnalysis(result);
+    if (result.conditionsMet) {
+      toast.success(`Strategy analysis: ${side.toUpperCase()} conditions MET`, {
+        description: `${result.entrySignal}. Potential profit +$${result.potentialProfit.toFixed(
+          2,
+        )} (TP target).`,
+      });
+    } else {
+      toast.info(`Strategy analysis: ${side.toUpperCase()} conditions NOT met`, {
+        description: result.waitingFor,
+      });
+    }
+  }
+
+  function handleTradeNow() {
+    if (!analysis || !analysis.conditionsMet || !analysis.riskCheck.passed) {
+      toast.error("Conditions are not met yet");
+      return;
+    }
     if (amount <= 0 || price <= 0) {
       toast.error("Enter a valid price and amount");
       return;
     }
-    toast.success(`${isBuy ? "Buy" : "Sell"} order placed (demo)`, {
-      description: `${amount.toFixed(symbol.basePrice >= 1 ? 4 : 6)} ${symbol.base} @ ${formatPrice(price, decimals)} ${symbol.quote} | Total ${formatPrice(total, 2)} ${symbol.quote}`,
+    const trade = {
+      id: `manual-${Date.now().toString(36)}-${Math.floor(
+        Math.random() * 1e6,
+      ).toString(36)}`,
+      status: "open" as const,
+      datetime: simNow,
+      market: symbol.label,
+      side,
+      amount,
+      entryPrice: price,
+      exitPrice: null,
+      pnl: 0,
+      pnlPct: 0,
+      result: null,
+      agentId: null,
+      source: "manual" as const,
+    };
+    addTrade(trade);
+    addBotLog(
+      "ORDER",
+      `Manual ${side.toUpperCase()} ${symbol.label} @ ${formatPrice(
+        price,
+        decimals,
+      )} (TP target +$${STRATEGY_CONFIG.takeProfitTarget.toFixed(2)})`,
+    );
+    toast.success(`Trade placed: ${side.toUpperCase()} ${symbol.label} @ ${formatPrice(
+      price,
+      decimals,
+    )}`, {
+      description: `TP target: +$${STRATEGY_CONFIG.takeProfitTarget.toFixed(2)}`,
+    });
+    // Clear the analysis so the user has to re-analyze for the next trade.
+    setAnalysis(null);
+  }
+
+  function handleResetStrategy() {
+    resetStrategySession();
+    setStrategyReference(livePrice);
+    setAnalysis(null);
+    toast.success("Strategy session reset", {
+      description: `Reference price set to ${formatPrice(livePrice, decimals)}`,
     });
   }
 
@@ -66,7 +210,7 @@ export function TradePanel({ symbol, livePrice }: TradePanelProps) {
           Trade
         </h2>
         <span className="text-[11px] text-muted-foreground">
-          Spot / Market
+          Drop Catcher
         </span>
       </div>
 
@@ -103,7 +247,7 @@ export function TradePanel({ symbol, livePrice }: TradePanelProps) {
         <div className="flex items-center justify-between rounded-md bg-[#0a0e17] px-2.5 py-1.5 text-[11px]">
           <span className="text-muted-foreground">Available</span>
           <span className="font-mono font-medium tabular-nums text-foreground">
-            {FAKE_BALANCE_QUOTE.toLocaleString("en-US", {
+            {accountBalance.toLocaleString("en-US", {
               maximumFractionDigits: 2,
             })}{" "}
             {symbol.quote}
@@ -170,23 +314,205 @@ export function TradePanel({ symbol, livePrice }: TradePanelProps) {
           </span>
         </div>
 
-        {/* Submit button */}
+        {/* Analyze button — replaces the old "place order" behavior */}
         <button
           type="button"
-          onClick={handleSubmit}
+          onClick={handleAnalyze}
           className="mt-1 rounded-md py-2.5 text-sm font-bold uppercase tracking-wider text-white transition-all hover:brightness-110 active:scale-[0.99]"
           style={{
             backgroundColor: sideColor,
             boxShadow: `0 0 12px ${isBuy ? "rgba(22,199,132,0.4)" : "rgba(234,57,67,0.4)"}`,
           }}
         >
-          {isBuy ? "Buy" : "Sell"} {symbol.base}
+          Analyze {side === "buy" ? "Buy" : "Sell"} {symbol.base}
         </button>
 
         <p className="pt-0.5 text-center text-[10px] text-muted-foreground">
-          Demo only - no real orders are executed
+          Strategy analysis runs before any trade is placed
         </p>
+
+        {/* Strategy analysis panel */}
+        {analysis && (
+          <AnalysisPanel
+            analysis={analysis}
+            symbolLabel={symbol.label}
+            side={side}
+            onTradeNow={handleTradeNow}
+            onResetStrategy={handleResetStrategy}
+          />
+        )}
       </div>
     </section>
+  );
+}
+
+function AnalysisPanel({
+  analysis,
+  symbolLabel,
+  side,
+  onTradeNow,
+  onResetStrategy,
+}: {
+  analysis: StrategyAnalysis;
+  symbolLabel: string;
+  side: "buy" | "sell";
+  onTradeNow: () => void;
+  onResetStrategy: () => void;
+}) {
+  const conditionsMet = analysis.conditionsMet;
+  const riskPassed = analysis.riskCheck.passed;
+  const canTrade = conditionsMet && riskPassed;
+  const decimals = priceDecimals(analysis.currentPrice);
+
+  return (
+    <div className="mt-1 rounded-md border border-[var(--panel-border)] bg-[#0a0e17] p-2.5">
+      {/* Status header */}
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+          Strategy Status
+        </span>
+        <span
+          className={cn(
+            "rounded px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider",
+            conditionsMet
+              ? "bg-[rgba(22,199,132,0.18)] text-[var(--bull)]"
+              : "bg-[rgba(234,57,67,0.14)] text-muted-foreground",
+          )}
+        >
+          {conditionsMet ? "Conditions MET" : "Conditions NOT met"}
+        </span>
+      </div>
+
+      {/* Grid of analysis metrics */}
+      <dl className="grid grid-cols-2 gap-x-2 gap-y-1.5 text-[11px]">
+        <MetricRow
+          label="Reference"
+          value={formatPrice(analysis.referencePrice, decimals)}
+        />
+        <MetricRow
+          label="Current"
+          value={formatPrice(analysis.currentPrice, decimals)}
+        />
+        <MetricRow
+          label="Drop"
+          value={`$${analysis.dropAmount.toFixed(2)}`}
+          accent={
+            analysis.dropAmount >= STRATEGY_CONFIG.entryDropThreshold
+              ? "bull"
+              : undefined
+          }
+        />
+        <MetricRow
+          label="Drop %"
+          value={`${analysis.dropPercent.toFixed(2)}%`}
+        />
+        <MetricRow
+          label="Position size"
+          value={`$${analysis.riskCheck.positionSize.toFixed(2)}`}
+        />
+        <MetricRow
+          label="Stop loss"
+          value={formatPrice(analysis.riskCheck.stopLoss, decimals)}
+        />
+        <MetricRow
+          label="Take profit"
+          value={`+$${analysis.riskCheck.takeProfit.toFixed(2)}`}
+          accent="bull"
+        />
+        <MetricRow
+          label="Potential profit"
+          value={`+$${analysis.potentialProfit.toFixed(2)}`}
+          accent="bull"
+        />
+        <MetricRow
+          label="Daily loss left"
+          value={`$${analysis.riskCheck.maxDailyLossRemaining.toFixed(2)}`}
+        />
+      </dl>
+
+      {/* Entry signal explanation */}
+      <p className="mt-2 text-[11px] leading-relaxed text-foreground/80">
+        <span className="font-semibold text-foreground">Entry signal:</span>{" "}
+        {analysis.entrySignal}
+      </p>
+
+      {/* Risk check status */}
+      <div className="mt-1.5 flex items-center gap-1.5 text-[11px]">
+        <span
+          className={cn(
+            "size-1.5 rounded-full",
+            riskPassed ? "bg-[var(--bull)]" : "bg-[var(--bear)]",
+          )}
+          aria-hidden="true"
+        />
+        <span className="font-semibold uppercase tracking-wide text-muted-foreground">
+          Risk check:
+        </span>
+        <span
+          className={cn(
+            riskPassed ? "text-[var(--bull)]" : "text-[var(--bear)]",
+          )}
+        >
+          {riskPassed ? "PASS" : "FAIL"}
+        </span>
+      </div>
+      <p className="mt-0.5 text-[10px] leading-relaxed text-muted-foreground">
+        {analysis.riskCheck.reason}
+      </p>
+
+      {/* Waiting-for / Trade Now row */}
+      <div className="mt-2.5 flex items-center gap-2">
+        {canTrade ? (
+          <button
+            type="button"
+            onClick={onTradeNow}
+            className="flex-1 rounded-md bg-[var(--bull)] py-2 text-sm font-bold uppercase tracking-wider text-[#0a0e17] shadow-[0_0_14px_rgba(22,199,132,0.45)] transition-all hover:brightness-110 active:scale-[0.99]"
+          >
+            Trade Now {side.toUpperCase()} {symbolLabel.split("/")[0]}
+          </button>
+        ) : (
+          <div className="flex-1 rounded-md border border-[var(--panel-border)] bg-[#0d1117] px-2.5 py-2 text-[11px] leading-relaxed text-muted-foreground">
+            {analysis.waitingFor}
+          </div>
+        )}
+        <button
+          type="button"
+          onClick={onResetStrategy}
+          title="Reset strategy session to current price"
+          className="flex size-9 shrink-0 items-center justify-center rounded-md border border-[var(--panel-border)] bg-[#0d1117] text-muted-foreground transition-colors hover:bg-[#11161f] hover:text-foreground"
+          aria-label="Reset strategy session"
+        >
+          <RefreshCw className="size-3.5" />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function MetricRow({
+  label,
+  value,
+  accent,
+}: {
+  label: string;
+  value: string;
+  accent?: "bull" | "bear";
+}) {
+  return (
+    <div className="flex flex-col gap-0.5">
+      <dt className="text-[10px] uppercase tracking-wider text-muted-foreground">
+        {label}
+      </dt>
+      <dd
+        className={cn(
+          "font-mono font-medium tabular-nums",
+          accent === "bull" && "text-[var(--bull)]",
+          accent === "bear" && "text-[var(--bear)]",
+          !accent && "text-foreground",
+        )}
+      >
+        {value}
+      </dd>
+    </div>
   );
 }

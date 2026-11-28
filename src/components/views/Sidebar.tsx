@@ -127,6 +127,7 @@ function UserAccountSection({ collapsed }: { collapsed: boolean }) {
   const accountInfo = useAuthStore((s) => s.accountInfo);
   const provider = useAuthStore((s) => s.provider);
   const accountType = useAuthStore((s) => s.accountType);
+  const setAccountType = useAuthStore((s) => s.setAccountType);
   const logout = useAuthStore((s) => s.logout);
 
   if (!accountInfo) return null;
@@ -139,6 +140,20 @@ function UserAccountSection({ collapsed }: { collapsed: boolean }) {
     logout();
     toast.success("Signed out", {
       description: "You have been returned to the login screen.",
+    });
+  };
+
+  const handleSwitchAccount = (next: "real" | "demo") => {
+    if (next === accountType) return;
+    setAccountType(next);
+    toast.success(`Switched to ${next === "demo" ? "Demo" : "Real"} account`, {
+      description:
+        next === "demo"
+          ? "Demo balance: $10,000.00"
+          : `Real balance: $${accountInfo.balance.toLocaleString("en-US", {
+              minimumFractionDigits: 2,
+              maximumFractionDigits: 2,
+            })}`,
     });
   };
 
@@ -180,7 +195,37 @@ function UserAccountSection({ collapsed }: { collapsed: boolean }) {
           </span>
         </div>
 
-        {/* Account type badge + balance */}
+        {/* Real / Demo switch */}
+        <div className="mb-2.5 grid grid-cols-2 gap-1 rounded-md border border-[var(--panel-border)] bg-[#0a0e17] p-0.5">
+          <button
+            type="button"
+            onClick={() => handleSwitchAccount("real")}
+            className={cn(
+              "rounded px-2 py-1 text-[10px] font-bold uppercase tracking-wider transition-colors",
+              !isDemo
+                ? "bg-[rgba(234,57,67,0.16)] text-[var(--bear)]"
+                : "text-muted-foreground hover:text-foreground",
+            )}
+            aria-pressed={!isDemo}
+          >
+            Real
+          </button>
+          <button
+            type="button"
+            onClick={() => handleSwitchAccount("demo")}
+            className={cn(
+              "rounded px-2 py-1 text-[10px] font-bold uppercase tracking-wider transition-colors",
+              isDemo
+                ? "bg-[rgba(22,199,132,0.16)] text-[var(--bull)]"
+                : "text-muted-foreground hover:text-foreground",
+            )}
+            aria-pressed={isDemo}
+          >
+            Demo
+          </button>
+        </div>
+
+        {/* Balance */}
         <div className="mb-2.5 flex items-center justify-between gap-2">
           <span className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
             <span
