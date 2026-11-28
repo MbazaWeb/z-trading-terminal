@@ -9,11 +9,9 @@ import {
 } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
 import {
-  SYMBOLS,
   formatPrice,
-  priceDecimals,
 } from "./useMarketData";
-import type { SymbolInfo, Trade } from "./types";
+import { ASSET_KIND_LABEL, type SymbolInfo, type Trade } from "./types";
 
 interface BottomPanelProps {
   trades: Trade[];
@@ -158,7 +156,8 @@ export function BottomPanel({
               <tbody>
                 {!pairs.length && <tr><td colSpan={4} className="p-6 text-center text-muted-foreground">Market feed unavailable</td></tr>}
                 {pairs.map((p) => {
-                  const up = p.change >= 0;
+                  const hasChange = Number.isFinite(p.change);
+                  const up = hasChange && p.change >= 0;
                   return (
                     <tr
                       key={p.symbol.id}
@@ -179,19 +178,18 @@ export function BottomPanel({
                         </div>
                       </td>
                       <td className="px-3 py-1.5 text-right font-mono tabular-nums">
-                        {formatPrice(p.price)}
+                        {formatPrice(p.price, p.symbol.digits)}
                       </td>
                       <td
                         className={cn(
                           "px-3 py-1.5 text-right font-mono tabular-nums",
-                          up ? "text-[var(--bull)]" : "text-[var(--bear)]",
+                          !hasChange ? "text-muted-foreground" : up ? "text-[var(--bull)]" : "text-[var(--bear)]",
                         )}
                       >
-                        {up ? "+" : ""}
-                        {Number.isFinite(p.change)?`${p.change.toFixed(2)}%`:"—"}
+                        {hasChange ? `${up ? "+" : ""}${p.change.toFixed(2)}%` : "—"}
                       </td>
                       <td className="px-3 py-1.5 text-right text-[11px] text-muted-foreground">
-                        {p.symbol.kind === "crypto" ? "Crypto" : "Stock"}
+                        {ASSET_KIND_LABEL[p.symbol.kind]}
                       </td>
                     </tr>
                   );

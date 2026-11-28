@@ -39,7 +39,8 @@ export function TickerTape({
       <div className="animate-ticker flex h-full w-max items-center whitespace-nowrap">
         {!loop.length && <span className="px-4 text-xs text-muted-foreground">Market feed unavailable</span>}
         {loop.map((item, idx) => {
-          const up = item.change >= 0;
+          const hasChange = Number.isFinite(item.change);
+          const up = hasChange && item.change >= 0;
           return (
             <button
               key={`${item.symbol.id}-${idx}`}
@@ -54,12 +55,12 @@ export function TickerTape({
                 {item.symbol.label}
               </span>
               <span className="font-mono text-foreground/70">
-                {formatPrice(item.price)}
+                {formatPrice(item.price, item.symbol.digits)}
               </span>
               <span
                 className={cn(
                   "font-mono",
-                  up ? "text-[var(--bull)]" : "text-[var(--bear)]",
+                  !hasChange ? "text-muted-foreground" : up ? "text-[var(--bull)]" : "text-[var(--bear)]",
                 )}
               >
                 {Number.isFinite(item.change) ? `${up?"+":""}${item.change.toFixed(2)}%` : "—"}

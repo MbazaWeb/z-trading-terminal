@@ -58,26 +58,27 @@ export interface MarketState {
   lastPriceDirection: "up" | "down" | "flat";
   livePrice: number;
   status: "loading" | "ready" | "stale" | "unavailable";
-  quote: {bid:number; ask:number; time:number} | null;
+  quote: {bid:number; ask:number; time:number; hasBidAsk?:boolean} | null;
   setTimeframe: (tf: Timeframe) => void;
   selectSymbol: (id:string) => void;
 }
-type MarketFeedSource = "MT5" | "COINBASE";
+type MarketFeedMode = "MT5" | "PUBLIC";
+type MarketFeedSource = "MT5" | "COINBASE" | "DERIV";
 type Feed = {
   source: MarketFeedSource;
   symbol: string;
   timeframe: Timeframe;
-  symbols: {id:string;name:string;base:string;quote:string;digits:number;lastPrice?:number;changePercent?:number}[];
-  quote: {bid:number;ask:number;time:number};
+  symbols: {id:string;label?:string;name:string;base:string;quote:string;digits?:number;kind?:SymbolInfo["kind"];lastPrice?:number|null;changePercent?:number|null}[];
+  quote: {bid:number;ask:number;time:number;hasBidAsk?:boolean};
   stats?: TickerStats;
   candles: (Omit<Candle,"volume">&{tickVolume:number})[];
 };
 const emptySymbol: SymbolInfo = {id:"",label:"Unavailable",base:"",quote:"",kind:"stock",name:"Unavailable",basePrice:0};
-export function useMarketData(_initialSymbolId = "", enabled = true, source: MarketFeedSource = "MT5"): MarketState {
+export function useMarketData(_initialSymbolId = "", enabled = true, mode: MarketFeedMode = "MT5"): MarketState {
   const [symbol,setSymbol] = useState("");
   const [timeframe,setTimeframe] = useState<Timeframe>("15m");
   const [snapshot,setSnapshot] = useState<{key:string;feed:Feed|null;failed:boolean}|null>(null);
-  const key = source + "|" + symbol + "|" + timeframe;
+  const key = mode + "|" + symbol + "|" + timeframe;
   useEffect(() => {
     if (!enabled) return;
     let stopped = false;
@@ -85,11 +86,14 @@ export function useMarketData(_initialSymbolId = "", enabled = true, source: Mar
     const controller = new AbortController();
     async function poll() {
       try {
-        const endpoint = source === "MT5" ? "/api/market/mt5" : "/api/market/public";
+        const endpoint = mode === "MT5" ? "/api/market/mt5" : "/api/market/public";
         const res = await fetch(endpoint + "?" + new URLSearchParams({symbol,timeframe}), {cache:"no-store",signal:controller.signal});
         if (!res.ok) throw Error("Feed unavailable");
         const feed:Feed = await res.json();
-        if (feed.source !== source || feed.timeframe !== timeframe || (symbol && feed.symbol !== symbol) || !Number.isFinite(feed.quote?.bid) || !Number.isFinite(feed.quote?.ask) || !Number.isFinite(feed.quote?.time) || feed.quote.bid <= 0 || feed.quote.ask < feed.quote.bid || !Array.isArray(feed.candles) || !feed.candles.length || !Array.isArray(feed.symbols) || !feed.symbols.some(s=>s.id===feed.symbol)) throw Error("Invalid feed");
+        const sourceIsValid = mode === "MT5"
+          ? feed.source === "MT5"
+          : feed.source === "COINBASE" || feed.source === "DERIV";
+        if (!sourceIsValid || feed.timeframe !== timeframe || (symbol && feed.symbol !== symbol) || !Number.isFinite(feed.quote?.bid) || !Number.isFinite(feed.quote?.ask) || !Number.isFinite(feed.quote?.time) || feed.quote.bid <= 0 || feed.quote.ask < feed.quote.bid || !Array.isArray(feed.candles) || !feed.candles.length || !Array.isArray(feed.symbols) || !feed.symbols.some(s=>s.id===feed.symbol)) throw Error("Invalid feed");
         if (!stopped) setSnapshot({key,feed,failed:false});
       } catch {
         if (!stopped) setSnapshot(prev=>({key,feed:prev?.key===key?prev.feed:null,failed:true}));
@@ -99,18 +103,19 @@ export function useMarketData(_initialSymbolId = "", enabled = true, source: Mar
     }
     void poll();
     return ()=>{stopped=true;controller.abort();clearTimeout(timer);};
-  },[enabled,key,symbol,timeframe,source]);
+  },[enabled,key,symbol,timeframe,mode]);
   const feed=enabled && snapshot?.key===key?snapshot.feed:null;
-  const symbols:SymbolInfo[]=(feed?.symbols??[]).map(s=>({id:s.id,label:source==="COINBASE"?`${s.base}/${s.quote}`:s.id,name:s.name,base:s.base,quote:s.quote,kind:source==="COINBASE"?"crypto":"stock",basePrice:s.id===feed?.symbol?feed.quote.bid:s.lastPrice??0,changePercent:s.changePercent}));
+  const symbols:SymbolInfo[]=(feed?.symbols??[]).map(s=>({id:s.id,label:s.label??(feed?.source==="COINBASE"?`${s.base}/${s.quote}`:s.id),name:s.name,base:s.base,quote:s.quote,kind:s.kind??(feed?.source==="COINBASE"?"crypto":"stock"),digits:s.digits,basePrice:s.id===feed?.symbol?feed.quote.bid:typeof s.lastPrice==="number"?s.lastPrice:NaN,changePercent:s.changePercent??undefined}));
   const activeSymbol=symbols.find(s=>s.id===feed?.symbol)??emptySymbol;
   const quote=feed?.quote??null;
   const livePrice=quote?.bid??0;
   const candles:Candle[]=(feed?.candles??[]).map(c=>({time:c.time,open:c.open,high:c.high,low:c.low,close:c.close,volume:c.tickVolume}));
   const status=!enabled?"unavailable":!feed?(snapshot?.key===key&&snapshot.failed?"unavailable":"loading"):snapshot?.failed||(Date.now()-feed.quote.time>60000||feed.quote.time>Date.now()+5000)?"stale":"ready";
   const stats:TickerStats=feed?.stats??{lastPrice:livePrice,open24h:NaN,changeAbs:NaN,changePercent:NaN,high24h:NaN,low24h:NaN,volume24h:NaN,volumeBase24h:NaN};
-  const orderBook:OrderBook={asks:[],bids:[],spread:quote?quote.ask-quote.bid:NaN,spreadPercent:quote?(quote.ask-quote.bid)/quote.bid*100:NaN,midPrice:quote?(quote.ask+quote.bid)/2:NaN};
+  const hasBidAsk=quote?.hasBidAsk!==false;
+  const orderBook:OrderBook={asks:[],bids:[],spread:quote&&hasBidAsk?quote.ask-quote.bid:NaN,spreadPercent:quote&&hasBidAsk?(quote.ask-quote.bid)/quote.bid*100:NaN,midPrice:quote?(quote.ask+quote.bid)/2:NaN};
   const selectSymbol=useCallback((id:string)=>setSymbol(id),[]);
-  return {source,symbols,activeSymbol,timeframe,candles,stats,orderBook,trades:[],lastPriceDirection:"flat",livePrice,status,quote,setTimeframe,selectSymbol};
+  return {source:feed?.source??(mode==="MT5"?"MT5":"COINBASE"),symbols,activeSymbol,timeframe,candles,stats,orderBook,trades:[],lastPriceDirection:"flat",livePrice,status,quote,setTimeframe,selectSymbol};
 }
 // ---- Moving average helper (used by the chart) -----------------------------
 

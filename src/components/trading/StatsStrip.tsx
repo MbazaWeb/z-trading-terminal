@@ -8,10 +8,10 @@ import {
   formatPrice,
   priceDecimals,
 } from "./useMarketData";
-import type { Candle, SymbolInfo, TickerStats } from "./types";
+import { ASSET_KIND_LABEL, type Candle, type SymbolInfo, type TickerStats } from "./types";
 
 interface StatsStripProps {
-  quote: {bid:number;ask:number;time:number}|null;
+  quote: {bid:number;ask:number;time:number;hasBidAsk?:boolean}|null;
   stats: TickerStats;
   candles: Candle[];
   symbol: SymbolInfo;
@@ -111,8 +111,9 @@ export function StatsStrip({
   symbol,
   direction,
 }: StatsStripProps) {
-  const up = stats.changePercent >= 0;
-  const decimals = priceDecimals(stats.lastPrice);
+  const hasChange = Number.isFinite(stats.changePercent);
+  const up = hasChange && stats.changePercent >= 0;
+  const decimals = symbol.digits ?? priceDecimals(stats.lastPrice);
 
   const sparkValues = useMemo(
     () => candles.slice(-24).map((c) => c.close),
@@ -151,25 +152,23 @@ export function StatsStrip({
           <span
             className={cn(
               "flex items-center gap-1 font-mono text-base font-semibold tabular-nums",
-              up ? "text-[var(--bull)]" : "text-[var(--bear)]",
+              !hasChange ? "text-muted-foreground" : up ? "text-[var(--bull)]" : "text-[var(--bear)]",
             )}
           >
-            {up ? (
+            {hasChange ? up ? (
               <ArrowUp className="size-3.5" />
             ) : (
               <ArrowDown className="size-3.5" />
-            )}
-            {up ? "+" : ""}
-            {Number.isFinite(stats.changePercent)?`${stats.changePercent.toFixed(2)}%`:"—"}
+            ) : null}
+            {hasChange ? `${up ? "+" : ""}${stats.changePercent.toFixed(2)}%` : "—"}
           </span>
           <span
             className={cn(
               "font-mono text-xs tabular-nums",
-              up ? "text-[var(--bull)]/80" : "text-[var(--bear)]/80",
+              !hasChange ? "text-muted-foreground" : up ? "text-[var(--bull)]/80" : "text-[var(--bear)]/80",
             )}
           >
-            {up ? "+" : ""}
-            {formatPrice(stats.changeAbs, decimals)}
+            {hasChange ? `${up ? "+" : ""}${formatPrice(stats.changeAbs, decimals)}` : "—"}
           </span>
         </div>
       </StatCard>
@@ -187,19 +186,19 @@ export function StatsStrip({
       </StatCard>
 
       {/* 24h Volume */}
-      <StatCard label={`24h Volume (${symbol.quote})`}>
+      <StatCard label={`24h Volume${symbol.quote ? ` (${symbol.quote})` : ""}`}>
         <span className="font-mono text-base font-semibold tabular-nums">
           {formatCompact(stats.volume24h)}
         </span>
         <span className="font-mono text-[11px] text-muted-foreground tabular-nums">
-          {formatCompact(stats.volumeBase24h)} {symbol.base}
+          {formatCompact(stats.volumeBase24h)}{symbol.base ? ` ${symbol.base}` : ""}
         </span>
       </StatCard>
 
       {/* Market Cap or P/E */}
       <StatCard
         label={
-          symbol.kind === "crypto" ? "Market Cap" : "P/E Ratio"
+          symbol.kind === "crypto" ? "Market Cap" : symbol.kind === "stock" ? "P/E Ratio" : "Instrument Type"
         }
       >
         <span className="font-mono text-base font-semibold tabular-nums">
@@ -207,12 +206,12 @@ export function StatsStrip({
             ? stats.marketCap != null
               ? `$${formatCompact(stats.marketCap)}`
               : "--"
-            : stats.peRatio != null
+            : symbol.kind === "stock" && stats.peRatio != null
               ? stats.peRatio.toFixed(1)
-              : "--"}
+              : symbol.kind === "stock" ? "--" : ASSET_KIND_LABEL[symbol.kind]}
         </span>
         <span className="text-[11px] text-muted-foreground">
-          {symbol.kind === "crypto" ? "Fully diluted" : "Trailing 12m"}
+          {symbol.kind === "crypto" ? "Fully diluted" : symbol.kind === "stock" ? "Trailing 12m" : "Market category"}
         </span>
       </StatCard>
 
@@ -220,10 +219,10 @@ export function StatsStrip({
       <StatCard label="Bid / Ask">
         <div className="flex flex-col">
           <span className="font-mono text-sm font-semibold text-[var(--bear)] tabular-nums">
-            {formatPrice(quote?.bid??NaN, decimals)}
+            {quote?.hasBidAsk === false ? "—" : formatPrice(quote?.bid??NaN, decimals)}
           </span>
           <span className="font-mono text-sm font-semibold text-[var(--bull)] tabular-nums">
-            {formatPrice(quote?.ask??NaN, decimals)}
+            {quote?.hasBidAsk === false ? "—" : formatPrice(quote?.ask??NaN, decimals)}
           </span>
         </div>
       </StatCard>

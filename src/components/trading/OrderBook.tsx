@@ -13,7 +13,7 @@ interface OrderBookProps {
 
 export function OrderBook({ orderBook, symbol, lastPrice }: OrderBookProps) {
   const { asks, bids, spread, spreadPercent } = orderBook;
-  const decimals = priceDecimals(lastPrice);
+  const decimals = symbol.digits ?? priceDecimals(lastPrice);
 
   // Cumulative max across both sides for depth-bar normalization.
   const maxTotal = useMemo(() => {
@@ -26,7 +26,8 @@ export function OrderBook({ orderBook, symbol, lastPrice }: OrderBookProps) {
   // best ask sits right above the spread row.
   const asksDisplay = useMemo(() => asks.slice().reverse(), [asks]);
 
-  const lastUp = lastPrice >= orderBook.midPrice;
+  const hasSpread = Number.isFinite(spread);
+  const lastUp = hasSpread && lastPrice >= orderBook.midPrice;
 
   return (
     <section className="flex flex-col rounded-md border border-[var(--panel-border)] bg-[#0d1117] animate-fade-in-up">
@@ -91,7 +92,7 @@ export function OrderBook({ orderBook, symbol, lastPrice }: OrderBookProps) {
               lastUp ? "text-[var(--bull)]" : "text-[var(--bear)]",
             )}
           >
-            {lastUp ? "^" : "v"}
+            {hasSpread ? lastUp ? "^" : "v" : "—"}
           </span>
         </div>
         <div className="flex flex-col items-end leading-none">

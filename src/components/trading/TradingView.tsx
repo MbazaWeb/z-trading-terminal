@@ -91,8 +91,10 @@ export function TradingView({ market, canTrade, accountType, onSignIn }: { marke
           </span>
           <span>
             {market.source === "COINBASE"
-              ? "Public market data · Read-only."
-              : `MT5 broker feed · ${accountType === "demo" ? "Demo" : accountType === "real" ? "Real" : "Selected"} account · Order execution disabled.`}
+              ? "Coinbase public market data · Read-only."
+              : market.source === "DERIV"
+                ? "Deriv public market data · Read-only."
+                : `MT5 broker feed · ${accountType === "demo" ? "Demo" : accountType === "real" ? "Real" : "Selected"} account · Order execution disabled.`}
           </span>
           <span className="font-mono tabular-nums">v1.0.0</span>
         </div>

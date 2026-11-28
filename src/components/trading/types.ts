@@ -1,4 +1,11 @@
-export type AssetKind = "crypto" | "stock";
+export type AssetKind = "crypto" | "stock" | "forex" | "commodity" | "volatility";
+export const ASSET_KIND_LABEL: Record<AssetKind, string> = {
+  crypto: "Crypto",
+  stock: "Stock",
+  forex: "Forex",
+  commodity: "Metals",
+  volatility: "Volatilities",
+};
 
 export interface SymbolInfo {
   id: string;
@@ -8,6 +15,7 @@ export interface SymbolInfo {
   kind: AssetKind;
   name: string; // e.g. "Bitcoin"
   basePrice: number;
+  digits?: number;
   changePercent?: number;
   marketCap?: number; // crypto
   peRatio?: number; // stock

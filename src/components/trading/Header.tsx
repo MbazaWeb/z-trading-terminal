@@ -19,7 +19,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { formatPrice } from "./useMarketData";
-import type { SymbolInfo } from "./types";
+import { ASSET_KIND_LABEL, type SymbolInfo } from "./types";
 
 interface HeaderProps {
   symbols: SymbolInfo[];
@@ -107,9 +107,11 @@ export function Header({
                 <span className="truncate font-mono text-sm font-semibold">
                   {activeSymbol.label}
                 </span>
-                <span className="hidden truncate text-xs text-muted-foreground xl:inline">
-                  / {activeSymbol.name}
-                </span>
+                {activeSymbol.name !== activeSymbol.label && (
+                  <span className="hidden truncate text-xs text-muted-foreground xl:inline">
+                    / {activeSymbol.name}
+                  </span>
+                )}
               </span>
               <ChevronDown className="ml-auto size-4 text-muted-foreground" />
             </Button>
@@ -139,12 +141,12 @@ export function Header({
                         {s.label}
                       </span>
                       <span className="text-[11px] text-muted-foreground">
-                        {s.kind === "crypto" ? "Crypto" : "Stock"}
+                        {ASSET_KIND_LABEL[s.kind]}
                       </span>
                     </div>
                     <div className="flex items-center gap-2">
                       <span className="font-mono text-xs text-muted-foreground">
-                        {formatPrice(s.basePrice)}
+                        {formatPrice(s.basePrice, s.digits)}
                       </span>
                       {isActive && (
                         <span className="size-1.5 rounded-full bg-[var(--bull)] " />
@@ -184,7 +186,7 @@ export function Header({
         </Button>
         <div className="hidden items-center gap-1 rounded-md border border-[var(--panel-border)] bg-[#0d1117] px-2 py-1.5 text-[11px] text-muted-foreground lg:flex">
           <Activity className="size-3.5 text-[var(--bull)]" />
-          <span className="font-mono tabular-nums">{formatPrice(livePrice)}</span>
+          <span className="font-mono tabular-nums">{formatPrice(livePrice, activeSymbol.digits)}</span>
         </div>
       </div>
     </header>

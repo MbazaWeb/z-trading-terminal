@@ -37,8 +37,8 @@ export default function Page() {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const accountType = useAuthStore((s) => s.accountType);
   const provider = useAuthStore((s) => s.provider);
-  const marketSource = isAuthenticated && provider === "metatrader" ? "MT5" : "COINBASE";
-  const market = useMarketData("", hasHydrated && (!isAuthenticated || provider === "metatrader"), marketSource);
+  const marketMode = isAuthenticated && provider === "metatrader" ? "MT5" : "PUBLIC";
+  const market = useMarketData("", hasHydrated, marketMode);
 
   // Handle the Deriv OAuth redirect (parses the URL hash on mount).
   useDerivCallback();

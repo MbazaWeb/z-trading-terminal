@@ -112,7 +112,7 @@ export function CandlestickChart({
   const volTop = priceBottom + gapVol;
   const volBottom = volTop + volH;
 
-  const decimals = priceDecimals(
+  const decimals = symbol.digits ?? priceDecimals(
     candles.length ? candles[candles.length - 1].close : symbol.basePrice,
   );
 
